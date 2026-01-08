@@ -78,13 +78,32 @@ impl RealityHandshake {
         // 9. Send EncryptedExtensions (Seq = 0)
         let mut ee_msg = BytesMut::new();
         ee_msg.put_u8(8); // Type EncryptedExtensions
-        ee_msg.put_u8(0); ee_msg.put_u8(0); ee_msg.put_u8(16); // Length 16
-        // ALPN Extension (h2, http/1.1)
-        ee_msg.put_u16(16); // Extension Type ALPN
-        ee_msg.put_u16(12); // Extension Len
-        ee_msg.put_u16(10); // ALPN List Len
-        ee_msg.put_u8(2); ee_msg.put_slice(b"h2");
-        ee_msg.put_u8(8); ee_msg.put_slice(b"http/1.1");
+        // Length Placeholder (3 bytes)
+        ee_msg.put_u8(0); ee_msg.put_u8(0); ee_msg.put_u8(0); 
+        
+        // Construct Extensions Data
+        let mut extensions = BytesMut::new();
+        
+        // Extension: ALPN (0x0010)
+        extensions.put_u16(16); // Type
+        // Data: ListLen(2) + "h2"(3) + "http/1.1"(9) = 14 bytes
+        extensions.put_u16(14); // Extension Data Len
+        extensions.put_u16(12); // ProtocolNameList Len
+        extensions.put_u8(2); extensions.put_slice(b"h2");
+        extensions.put_u8(8); extensions.put_slice(b"http/1.1");
+        
+        // Fill Handshake Msg Length
+        let ext_len = extensions.len();
+        let total_len = 2 + ext_len; // 2 bytes for Extensions Length Prefix
+        let len_bytes = (total_len as u32).to_be_bytes();
+        ee_msg[1] = len_bytes[1];
+        ee_msg[2] = len_bytes[2];
+        ee_msg[3] = len_bytes[3];
+        
+        // Extensions Length Prefix
+        ee_msg.put_u16(ext_len as u16);
+        // Extensions
+        ee_msg.put_slice(&extensions);
         
         let ee_cipher = keys.encrypt_server_record(0, &ee_msg, 22)?;
         client_stream.write_all(&ee_cipher).await?;
