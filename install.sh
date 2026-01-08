@@ -227,8 +227,8 @@ Wants=network.target
 
 [Service]
 Type=simple
-User=nobody
-Group=nogroup
+User=root
+Group=root
 WorkingDirectory=$INSTALL_DIR
 ExecStart=$INSTALL_DIR/vless-server --config $INSTALL_DIR/config.json
 Restart=on-failure
