@@ -11,15 +11,11 @@ use super::crypto::{RealityCrypto, TlsKeys};
 #[derive(Clone)]
 pub struct RealityHandshake {
     config: RealityConfig,
-    cached_cert: Option<Vec<u8>>,
 }
 
 impl RealityHandshake {
     pub fn new(config: RealityConfig) -> Self {
-        Self { 
-            config,
-            cached_cert: None,
-        }
+        Self { config }
     }
 
     pub async fn perform(&self, mut client_stream: TcpStream) -> Result<super::stream::TlsStream<TcpStream>> {
@@ -62,44 +58,19 @@ impl RealityHandshake {
             &super::crypto::hash_transcript(&transcript0)
         )?;
         
-        // 7. EncryptedExtensions (empty for now)
+        // 7. EncryptedExtensions + Finished (bundled, no Certificate)
+        // This mimics a PSK-based handshake where Certificate is omitted
+        
         let mut ee_msg = BytesMut::new();
         ee_msg.put_u8(8); // Type: EncryptedExtensions
-        ee_msg.put_u8(0); ee_msg.put_u8(0); ee_msg.put_u8(2); // Length: 2
-        ee_msg.put_u16(0); // Extensions Length: 0
+        ee_msg.put_u8(0); ee_msg.put_u8(0); ee_msg.put_u8(2);
+        ee_msg.put_u16(0); // No extensions
         
-        let ee_record = hs_keys.encrypt_server_record(0, &ee_msg, 22)?;
-        client_stream.write_all(&ee_record).await?;
-        debug!("EncryptedExtensions sent (seq=0)");
-        
-        // 8. Fetch and send real certificate
-        let cert_msg = match super::cert_fetch::fetch_certificate(&self.config.dest).await {
-            Ok(cert) => {
-                debug!("Fetched certificate from {}, len={}", self.config.dest, cert.len());
-                cert
-            },
-            Err(e) => {
-                warn!("Failed to fetch certificate: {}, using empty cert", e);
-                // Fallback to empty certificate
-                let mut empty_cert = BytesMut::new();
-                empty_cert.put_u8(11); // Type: Certificate
-                empty_cert.put_u8(0); empty_cert.put_u8(0); empty_cert.put_u8(4);
-                empty_cert.put_u8(0); // Context
-                empty_cert.put_u8(0); empty_cert.put_u8(0); empty_cert.put_u8(0); // List len
-                empty_cert.to_vec()
-            }
-        };
-        
-        let cert_record = hs_keys.encrypt_server_record(1, &cert_msg, 22)?;
-        client_stream.write_all(&cert_record).await?;
-        debug!("Certificate sent (seq=1)");
-        
-        // 9. Finished
+        // Transcript for Finished: CH + SH + EE
         let transcript1 = vec![
             client_hello_payload.as_slice(), 
             server_hello.handshake_payload(),
-            &ee_msg,
-            &cert_msg
+            &ee_msg
         ];
         let hash1 = super::crypto::hash_transcript(&transcript1);
         let verify_data = TlsKeys::calculate_verify_data(&hs_keys.server_traffic_secret, &hash1)?;
@@ -112,13 +83,18 @@ impl RealityHandshake {
         fin_msg.put_u8((fin_len & 0xFF) as u8);
         fin_msg.put_slice(&verify_data);
         
-        let fin_record = hs_keys.encrypt_server_record(2, &fin_msg, 22)?;
-        client_stream.write_all(&fin_record).await?;
-        debug!("Finished sent (seq=2)");
+        // Bundle EE + Fin in one record
+        let mut bundle = BytesMut::new();
+        bundle.put_slice(&ee_msg);
+        bundle.put_slice(&fin_msg);
+        
+        let record = hs_keys.encrypt_server_record(0, &bundle, 22)?;
+        client_stream.write_all(&record).await?;
+        debug!("EncryptedExtensions + Finished sent (bundled)");
         
         info!("Server handshake complete, waiting for client Finished...");
 
-        // 10. Read Client Finished
+        // 8. Read Client Finished
         let mut buf = BytesMut::with_capacity(4096);
         
         loop {
@@ -158,12 +134,12 @@ impl RealityHandshake {
             }
         }
         
-        // 11. Derive Application Keys
+        // 9. Derive Application Keys
+        // Transcript: CH + SH + EE + Fin (no Certificate)
         let transcript_app = vec![
             client_hello_payload.as_slice(), 
             server_hello.handshake_payload(),
             &ee_msg,
-            &cert_msg,
             &fin_msg
         ];
         let app_keys = TlsKeys::derive_application_keys(&handshake_secret, &super::crypto::hash_transcript(&transcript_app))?;
