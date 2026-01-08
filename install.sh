@@ -141,44 +141,50 @@ fi
 
 DOMAIN=$(echo $DEST | cut -d: -f1)
 
-# Generate random short ID (8 chars / 4 bytes)
-RANDOM_SHORT_ID=$(openssl rand -hex 4)
-
-if [ -t 0 ]; then
-    read -p "Short ID [${RANDOM_SHORT_ID}]: " SHORT_ID_INPUT
-    SHORT_ID=${SHORT_ID_INPUT:-$RANDOM_SHORT_ID}
-else
-    SHORT_ID="$RANDOM_SHORT_ID"
-fi
+# Short ID configuration / Short ID 配置
+# Default to empty to allow maximum compatibility with clients sending random Session IDs
+# 默认为空以允许最大兼容性（支持发送随机 Session ID 的客户端）
+SHORT_ID=""
 
 # Create server configuration / 创建服务器配置
 cat > config.json << EOF
 {
-  "inbounds": [{
-    "protocol": "vless",
-    "listen": "0.0.0.0",
-    "port": $PORT,
-    "settings": {
-      "clients": [{
-        "id": "$CLIENT_UUID",
-        "flow": "",
-        "email": "user@example.com"
-      }],
-      "decryption": "none"
-    },
-    "streamSettings": {
-      "network": "tcp",
-      "security": "reality",
-      "realitySettings": {
-        "dest": "$DEST",
-        "serverNames": ["$DOMAIN", "*.$DOMAIN"],
-        "privateKey": "$PRIVATE_KEY",
-        "publicKey": "$PUBLIC_KEY",
-        "shortIds": ["$SHORT_ID"],
-        "fingerprint": "chrome"
+  "log": {
+    "loglevel": "info"
+  },
+  "inbounds": [
+    {
+      "port": $PORT,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "$CLIENT_UUID",
+            "flow": "",
+            "email": "user@example.com"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "$DEST",
+          "xver": 0,
+          "serverNames": [
+            "$DOMAIN",
+            "*.$DOMAIN"
+          ],
+          "privateKey": "$PRIVATE_KEY",
+          "publicKey": "$PUBLIC_KEY",
+          "shortIds": [],
+          "fingerprint": "chrome"
+        }
       }
     }
-  }],
+  ],
   "outbounds": [{
     "protocol": "freedom",
     "tag": "direct"
@@ -347,6 +353,7 @@ echo "  IP: $SERVER_IP"
 echo "  Port / 端口: $PORT"
 echo "  UUID: $CLIENT_UUID"
 echo "  Public Key / 公钥: $PUBLIC_KEY"
+echo "  Short ID / 短 ID: (None / 空)"
 echo ""
 echo -e "${BLUE}Client Configuration / 客户端配置:${NC}"
 echo "  Configuration file / 配置文件: $INSTALL_DIR/client-config.json"
