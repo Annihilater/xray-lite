@@ -77,7 +77,10 @@ impl RealityHandshake {
         
         // 7. 发送加密握手消息（简化版：EE + Cert(empty) + Fin）
         let ee_msg = vec![8, 0, 0, 2, 0, 0];
+        debug!("EncryptedExtensions plaintext: {}", hex::encode(&ee_msg));
+        
         let cert_msg = vec![11, 0, 0, 4, 0, 0, 0, 0];
+        debug!("Certificate plaintext: {}", hex::encode(&cert_msg));
         
         let transcript1 = vec![
             client_hello_raw.as_slice(),
@@ -86,22 +89,29 @@ impl RealityHandshake {
             &cert_msg
         ];
         let hash1 = super::crypto::hash_transcript(&transcript1);
+        debug!("Transcript hash (for Finished): {}", hex::encode(&hash1));
+        
         let verify_data = TlsKeys::calculate_verify_data(&hs_keys.server_traffic_secret, &hash1)?;
+        debug!("Verify data: {}", hex::encode(&verify_data));
         
         let mut fin_msg = BytesMut::new();
         fin_msg.put_u8(20);
         let fin_len = verify_data.len() as u32;
         fin_msg.put_slice(&fin_len.to_be_bytes()[1..4]);
         fin_msg.put_slice(&verify_data);
+        debug!("Finished plaintext: {}", hex::encode(&fin_msg));
         
         // 发送加密消息
         let ee_record = hs_keys.encrypt_server_record(0, &ee_msg, 22)?;
+        debug!("EncryptedExtensions encrypted (seq=0): {}", hex::encode(&ee_record));
         client_stream.write_all(&ee_record).await?;
         
         let cert_record = hs_keys.encrypt_server_record(1, &cert_msg, 22)?;
+        debug!("Certificate encrypted (seq=1): {}", hex::encode(&cert_record));
         client_stream.write_all(&cert_record).await?;
         
         let fin_record = hs_keys.encrypt_server_record(2, &fin_msg, 22)?;
+        debug!("Finished encrypted (seq=2): {}", hex::encode(&fin_record));
         client_stream.write_all(&fin_record).await?;
         
         info!("Server handshake complete, waiting for client Finished...");
