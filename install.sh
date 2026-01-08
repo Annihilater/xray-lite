@@ -154,6 +154,7 @@ cat > config.json << EOF
   },
   "inbounds": [
     {
+      "listen": "0.0.0.0",
       "port": $PORT,
       "protocol": "vless",
       "settings": {
