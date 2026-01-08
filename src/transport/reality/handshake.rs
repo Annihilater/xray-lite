@@ -42,10 +42,14 @@ impl RealityHandshake {
         debug!("ECDH Shared Secret derived");
 
         // 5. 构造 ServerHello
-        let temp_random = [0u8; 32];
+        // v0.1.15: 使用真正的随机熵
+        use rand::RngCore;
+        let mut server_random = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut server_random);
+
         let mut server_hello = super::tls::ServerHello::new_reality(
             &client_hello.session_id,
-            temp_random,
+            server_random,
             &my_public_key
         )?;
         
@@ -101,7 +105,6 @@ impl RealityHandshake {
         client_stream.write_all(&cert_cipher).await?;
         
         // 10. Send Finished (Seq = 2)
-        // Transcript for Server Finished: CH...Cert
         let transcript2 = vec![
             client_hello_payload.as_slice(), 
             server_hello.handshake_payload(),
@@ -120,9 +123,9 @@ impl RealityHandshake {
         let fin_cipher = keys.encrypt_server_record(2, &fin_msg, 22)?;
         client_stream.write_all(&fin_cipher).await?;
         
-        info!("Handshake sent, waiting for client response...");
+        info!("Handshake sent, waiting for client Finished/Alert...");
 
-        // 11. Read Client Finished
+        // 11. Read Client Response
         let mut buf = BytesMut::with_capacity(4096);
         let mut client_finished_payload = Vec::new();
         
@@ -148,26 +151,27 @@ impl RealityHandshake {
                 continue;
             }
             
-            if content_type == 21 { // Alert
-                let mut header = [0u8; 5];
-                header.copy_from_slice(&record_data[..5]);
-                let ciphertext = &mut record_data[5..];
-                
-                if let Ok((ctype, plen)) = keys.decrypt_client_record(0, &header, ciphertext) {
-                    if ctype == 21 && plen >= 2 {
-                        warn!("Received Client Alert: level={}, description={}", ciphertext[0], ciphertext[1]);
-                    }
-                }
-                return Err(anyhow!("Handshake failed: Received Alert(21) from client"));
+            if content_type == 21 { // Unencrypted Alert (Rare)
+                let level = record_data[5];
+                let desc = record_data[6];
+                return Err(anyhow!("Received Unencrypted Alert: level={}, description={}", level, desc));
             }
             
-            if content_type == 23 { // App Data
+            if content_type == 23 { // App Data (Possibly Encrypted Handshake/Alert)
                 let mut header = [0u8; 5];
                 header.copy_from_slice(&record_data[..5]);
                 let ciphertext = &mut record_data[5..];
                 
                 let (ctype, plen) = keys.decrypt_client_record(0, &header, ciphertext)?;
-                if ctype != 22 { return Err(anyhow!("Expected Handshake(22), got {}", ctype)); }
+                
+                if ctype == 21 { // Encrypted Alert
+                    if plen >= 2 {
+                        warn!("Received Client TLS Alert: level={}, description={}", ciphertext[0], ciphertext[1]);
+                    }
+                    return Err(anyhow!("Handshake failed: Client sent TLS Alert"));
+                }
+
+                if ctype != 22 { return Err(anyhow!("Expected Handshake(22), got InnerType {}", ctype)); }
                 
                 if plen > 0 && ciphertext[0] == 20 {
                     client_finished_payload = ciphertext[..plen].to_vec();
@@ -179,7 +183,6 @@ impl RealityHandshake {
         }
         
         // 12. Derive Application Keys
-        // RFC 8446 Section 7.3: Transcript Hash for application keys stops at Server Finished
         let transcript3 = vec![
             client_hello_payload.as_slice(), 
             server_hello.handshake_payload(),
