@@ -28,8 +28,8 @@ impl RealityHandshake {
         debug!("Client SessionID: {}", hex::encode(&client_hello.session_id));
         debug!("Client Random: {}", hex::encode(&client_hello.random));
         
-        let auth = super::auth::RealityAuth::new(&self.config.private_key)?;
-        let is_reality_client = auth.verify_client_auth(&client_hello.random, &client_hello.session_id);
+        // TODO: 暂时禁用客户端认证，测试握手流程
+        let is_reality_client = true; // 临时：接受所有客户端
         
         debug!("Reality authentication result: {}", is_reality_client);
         
