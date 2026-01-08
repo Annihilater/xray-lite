@@ -103,16 +103,34 @@ SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s ip.sb 2>/dev/null || echo
 
 # Interactive configuration / 交互式配置
 echo ""
-read -p "Server port / 服务器端口 [443]: " PORT
-PORT=${PORT:-443}
+if [ -t 0 ]; then
+    read -p "Server port / 服务器端口 [443]: " PORT_INPUT
+    PORT=${PORT_INPUT:-443}
+else
+    PORT=443
+    echo "Non-interactive mode detected using default port 443 / 检测到非交互模式，使用默认端口 443"
+fi
 
-read -p "Masquerade website / 伪装网站 [www.microsoft.com:443]: " DEST
-DEST=${DEST:-www.microsoft.com:443}
+if [[ ! "$PORT" =~ ^[0-9]+$ ]]; then
+    echo -e "${YELLOW}Invalid port, using default 443 / 端口无效，使用默认 443${NC}"
+    PORT=443
+fi
+
+if [ -t 0 ]; then
+    read -p "Masquerade website / 伪装网站 [www.microsoft.com:443]: " DEST_INPUT
+    DEST=${DEST_INPUT:-www.microsoft.com:443}
+else
+    DEST="www.microsoft.com:443"
+fi
 
 DOMAIN=$(echo $DEST | cut -d: -f1)
 
-read -p "Short ID [0123456789abcdef]: " SHORT_ID
-SHORT_ID=${SHORT_ID:-0123456789abcdef}
+if [ -t 0 ]; then
+    read -p "Short ID [0123456789abcdef]: " SHORT_ID_INPUT
+    SHORT_ID=${SHORT_ID_INPUT:-0123456789abcdef}
+else
+    SHORT_ID="0123456789abcdef"
+fi
 
 # Create server configuration / 创建服务器配置
 cat > config.json << EOF
