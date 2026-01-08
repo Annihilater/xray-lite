@@ -141,11 +141,14 @@ fi
 
 DOMAIN=$(echo $DEST | cut -d: -f1)
 
+# Generate random short ID (8 chars / 4 bytes)
+RANDOM_SHORT_ID=$(openssl rand -hex 4)
+
 if [ -t 0 ]; then
-    read -p "Short ID [0123456789abcdef]: " SHORT_ID_INPUT
-    SHORT_ID=${SHORT_ID_INPUT:-0123456789abcdef}
+    read -p "Short ID [${RANDOM_SHORT_ID}]: " SHORT_ID_INPUT
+    SHORT_ID=${SHORT_ID_INPUT:-$RANDOM_SHORT_ID}
 else
-    SHORT_ID="0123456789abcdef"
+    SHORT_ID="$RANDOM_SHORT_ID"
 fi
 
 # Create server configuration / 创建服务器配置
