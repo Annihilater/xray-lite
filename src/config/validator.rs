@@ -81,11 +81,6 @@ impl Validator {
             ));
         }
 
-        // 验证 shortIds
-        if reality.short_ids.is_empty() {
-            return Err(anyhow!("入站 {} 的 Reality shortIds 不能为空", inbound_idx));
-        }
-
         Ok(())
     }
 

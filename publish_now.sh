@@ -33,7 +33,7 @@ if ! ./gh auth status &> /dev/null; then
 fi
 
 # 3. 创建 Release
-VERSION="v0.1.2"
+VERSION="v0.1.3"
 FILE="release/xray-lite-x86_64-unknown-linux-gnu.tar.gz"
 
 if [ ! -f "$FILE" ]; then
@@ -44,7 +44,7 @@ fi
 echo -e "正在发布 Release $VERSION ..."
 
 # 创建 Release 并上传文件
-if ./gh release create "$VERSION" "$FILE" --title "$VERSION - Improved Short ID Validation" --notes "Fixed Reality Short ID validation issue by supporting prefix matching."; then
+if ./gh release create "$VERSION" "$FILE" --title "$VERSION - Allow Empty Short IDs" --notes "Removed validation requiring non-empty shortIds to support clients sending random session IDs."; then
     echo -e "${GREEN}发布成功！${NC}"
     echo "发布地址: https://github.com/undead-undead/xray-lite/releases/tag/$VERSION"
     echo ""
