@@ -30,7 +30,11 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     // 初始化日志
-    let log_level = match args.log_level.to_lowercase().as_str() {
+    // 优先使用环境变量 RUST_LOG，否则使用命令行参数
+    let log_level_str = std::env::var("RUST_LOG")
+        .unwrap_or_else(|_| args.log_level.clone());
+    
+    let log_level = match log_level_str.to_lowercase().as_str() {
         "trace" => Level::TRACE,
         "debug" => Level::DEBUG,
         "info" => Level::INFO,
