@@ -225,20 +225,20 @@ impl RealityHandshake {
         content.push(0x00);
         content.extend_from_slice(transcript_hash);
         
-        // 使用证书私钥签名
-        let signature = cert.serialize_private_key_der();
-        
-        // 为简化，使用虚拟签名（实际应该用私钥签名 content）
-        let dummy_sig = vec![0u8; 64];
+        // 使用证书的密钥对进行签名
+        // rcgen 默认使用 ECDSA P-256
+        let key_pair = cert.get_key_pair();
+        let signature = key_pair.sign(&content)
+            .map_err(|e| anyhow!("Failed to sign: {}", e))?;
         
         let mut msg = BytesMut::new();
         msg.put_u8(15); // Type: CertificateVerify
         
-        let body_len = 2 + 2 + dummy_sig.len();
+        let body_len = 2 + 2 + signature.as_ref().len();
         msg.put_slice(&(body_len as u32).to_be_bytes()[1..4]);
-        msg.put_u16(0x0804); // Algorithm: rsa_pss_rsae_sha256
-        msg.put_u16(dummy_sig.len() as u16);
-        msg.put_slice(&dummy_sig);
+        msg.put_u16(0x0403); // Algorithm: ecdsa_secp256r1_sha256
+        msg.put_u16(signature.as_ref().len() as u16);
+        msg.put_slice(signature.as_ref());
         
         Ok(msg.to_vec())
     }
