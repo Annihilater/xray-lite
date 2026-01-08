@@ -1,77 +1,77 @@
-# Xray-Lite - 轻量级 Xray Rust 实现
+# Xray-Lite - Lightweight Xray Rust Implementation
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
 
-一个使用 Rust 实现的高性能 VLESS+Reality+XHTTP 代理服务器，完全兼容 Xray 客户端。
+A high-performance VLESS+Reality+XHTTP proxy server implemented in Rust, fully compatible with all Xray clients.
 
-## ✨ 特性
+## ✨ Features
 
-- 🚀 **高性能**: 基于 Tokio 异步运行时，充分利用多核性能
-- 🔒 **Reality 协议**: 先进的流量伪装，抵抗主动探测
-- 🌐 **XHTTP 支持**: HTTP/2 + gRPC 伪装，穿透 CDN
-- 🪶 **轻量级**: 编译后二进制仅 1.5MB，内存占用低
-- 🔧 **易部署**: 一键部署脚本，systemd 服务支持
-- ✅ **Xray 兼容**: 与所有 Xray 客户端 100% 兼容
+- 🚀 **High Performance**: Built on Tokio async runtime, fully utilizing multi-core performance
+- 🔒 **Reality Protocol**: Advanced traffic masquerading, resistant to active probing
+- 🌐 **XHTTP Support**: HTTP/2 + gRPC masquerading, penetrates CDN
+- 🪶 **Lightweight**: Only 1.5MB binary, low memory footprint
+- 🔧 **Easy Deployment**: One-click deployment script, systemd service support
+- ✅ **Xray Compatible**: 100% compatible with all Xray clients
 
-## 🔄 Xray 客户端兼容性
+## 🔄 Xray Client Compatibility
 
-**完全兼容以下客户端**:
-- ✅ Xray-core (官方客户端)
+**Fully compatible with the following clients**:
+- ✅ Xray-core (Official client)
 - ✅ v2rayN (Windows)
 - ✅ v2rayNG (Android)
 - ✅ Shadowrocket (iOS)
-- ✅ 所有支持 VLESS+Reality 的客户端
+- ✅ All clients supporting VLESS+Reality
 
-| 组件 | 兼容性 |
-|------|--------|
-| VLESS 协议 | ✅ 100% |
-| Reality 认证 | ✅ 100% |
-| XHTTP 传输 | ✅ 100% |
-| 配置格式 | ✅ 100% |
-| 密钥格式 | ✅ 100% |
+| Component | Compatibility |
+|-----------|---------------|
+| VLESS Protocol | ✅ 100% |
+| Reality Authentication | ✅ 100% |
+| XHTTP Transport | ✅ 100% |
+| Config Format | ✅ 100% |
+| Key Format | ✅ 100% |
 
-## 🚀 快速开始
+## 🚀 Quick Start
 
-### 方法 1: 一键部署 (推荐)
+### Method 1: One-Click Deployment (Recommended)
 
 ```bash
-# 克隆项目
-git clone https://github.com/yourusername/xray-lite.git
+# Clone the project
+git clone https://github.com/undead-undead/xray-lite.git
 cd xray-lite
 
-# 一键部署
+# One-click deployment
 ./deploy.sh
 ```
 
-脚本会自动完成:
-1. ✅ 生成 X25519 密钥对
-2. ✅ 生成客户端 UUID
-3. ✅ 创建服务器配置
-4. ✅ 编译服务器
-5. ✅ 生成客户端配置
+The script will automatically:
+1. ✅ Generate X25519 key pair
+2. ✅ Generate client UUID
+3. ✅ Create server configuration
+4. ✅ Compile server
+5. ✅ Generate client configuration
 
-### 方法 2: 手动配置
+### Method 2: Manual Configuration
 
-#### 1. 生成密钥对
+#### 1. Generate Key Pair
 
 ```bash
 cargo run --bin keygen
 ```
 
-输出示例:
+Example output:
 ```
 Private key: qM2cc_YkTi4G62CP2RBk5-m48Baxus5T7FM28ZRmpyQ
 Public key:  xKvN8mL3pQ5rT7yU9wV1bC3dE5fG7hI9jK1lM3nO5pQ
 ```
 
-#### 2. 创建配置文件
+#### 2. Create Configuration File
 
 ```bash
 cargo run --bin genconfig > config.json
 ```
 
-编辑 `config.json`:
+Edit `config.json`:
 ```json
 {
   "inbounds": [{
@@ -95,57 +95,57 @@ cargo run --bin genconfig > config.json
 }
 ```
 
-#### 3. 编译运行
+#### 3. Build and Run
 
 ```bash
-# 编译
+# Build
 cargo build --release
 
-# 运行
+# Run
 ./target/release/vless-server --config config.json
 ```
 
-## 📦 安装为系统服务
+## 📦 Install as System Service
 
 ```bash
-# 编译项目
+# Build the project
 cargo build --release
 
-# 安装服务 (需要 root 权限)
+# Install service (requires root)
 sudo ./install_service.sh
 ```
 
-服务管理:
+Service management:
 ```bash
-sudo systemctl start vless-reality    # 启动
-sudo systemctl stop vless-reality     # 停止
-sudo systemctl status vless-reality   # 状态
-sudo journalctl -u vless-reality -f   # 日志
+sudo systemctl start xray-lite      # Start
+sudo systemctl stop xray-lite       # Stop
+sudo systemctl status xray-lite     # Status
+sudo journalctl -u xray-lite -f     # Logs
 ```
 
-## 🔧 工具
+## 🔧 Tools
 
-### keygen - 密钥生成工具
+### keygen - Key Generation Tool
 
 ```bash
 cargo run --bin keygen
 ```
 
-生成符合 Xray 格式的 X25519 密钥对 (URL-safe Base64, 无 padding)。
+Generates X25519 key pairs in Xray format (URL-safe Base64, no padding).
 
-### genconfig - 配置生成工具
+### genconfig - Configuration Generator
 
 ```bash
 cargo run --bin genconfig
 ```
 
-生成配置文件模板。
+Generates configuration file template.
 
-## 📱 客户端配置
+## 📱 Client Configuration
 
-### Xray 客户端
+### Xray Client
 
-使用 `deploy.sh` 生成的 `client-config.json`:
+Use `client-config.json` generated by `deploy.sh`:
 
 ```bash
 xray run -c client-config.json
@@ -153,37 +153,37 @@ xray run -c client-config.json
 
 ### v2rayN (Windows)
 
-1. 添加服务器
-2. 选择 VLESS 协议
-3. 配置参数:
-   - 地址: 你的服务器 IP
-   - 端口: 443
-   - UUID: 从配置文件获取
-   - 传输协议: TCP
-   - 传输层安全: Reality
-   - 公钥: 从 keygen 获取
+1. Add server
+2. Select VLESS protocol
+3. Configure parameters:
+   - Address: Your server IP
+   - Port: 443
+   - UUID: From config file
+   - Transport: TCP
+   - Security: Reality
+   - Public Key: From keygen
    - ServerName: www.microsoft.com
    - Short ID: 0123456789abcdef
 
-## 🧪 测试
+## 🧪 Testing
 
-### 基本功能测试
+### Basic Functionality Test
 
 ```bash
 ./test_reality_basic.sh
 ```
 
-### 集成测试 (需要 Xray)
+### Integration Test (requires Xray)
 
 ```bash
-# 安装 Xray
+# Install Xray
 bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
 
-# 运行测试
+# Run test
 ./test_xray_integration.sh
 ```
 
-## 🏗️ 架构
+## 🏗️ Architecture
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -202,24 +202,24 @@ bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release
 └─────────────────────────────────────────────────────┘
 ```
 
-**核心模块**:
-- `config/` - 配置管理
-- `protocol/vless/` - VLESS 协议实现
-- `transport/reality/` - Reality TLS 握手
+**Core Modules**:
+- `config/` - Configuration management
+- `protocol/vless/` - VLESS protocol implementation
+- `transport/reality/` - Reality TLS handshake
 - `transport/xhttp/` - XHTTP HTTP/2 + gRPC
-- `network/` - 网络连接管理
-- `utils/` - 工具函数
+- `network/` - Network connection management
+- `utils/` - Utility functions
 
-## 📊 性能
+## 📊 Performance
 
-- **编译后大小**: ~1.5MB (stripped)
-- **内存占用**: ~10MB (空闲)
-- **并发连接**: 支持数千并发
-- **延迟**: Reality 握手 ~100ms
+- **Binary Size**: ~1.5MB (stripped)
+- **Memory Usage**: ~10MB (idle)
+- **Concurrent Connections**: Supports thousands
+- **Latency**: Reality handshake ~100ms
 
-## 🐛 故障排除
+## 🐛 Troubleshooting
 
-### 编译失败
+### Build Failure
 
 ```bash
 rustup update
@@ -227,62 +227,62 @@ cargo clean
 cargo build --release
 ```
 
-### 连接失败
+### Connection Failure
 
-检查清单:
-1. ✅ 防火墙是否开放端口?
-2. ✅ 配置文件是否正确?
-3. ✅ 密钥是否匹配?
-4. ✅ Short ID 是否一致?
+Checklist:
+1. ✅ Is the firewall port open?
+2. ✅ Is the configuration correct?
+3. ✅ Do the keys match?
+4. ✅ Is the Short ID consistent?
 
-查看日志:
+View logs:
 ```bash
 RUST_LOG=debug ./target/release/vless-server --config config.json
 ```
 
-## 📚 文档
+## 📚 Documentation
 
-- [DESIGN.md](DESIGN.md) - 架构设计文档
-- [USAGE.md](USAGE.md) - 详细使用指南
+- [DESIGN.md](DESIGN.md) - Architecture design documentation
+- [USAGE.md](USAGE.md) - Detailed usage guide
 
-## 🔒 安全建议
+## 🔒 Security Recommendations
 
-1. **密钥管理**
-   - 妥善保管私钥
-   - 定期更换密钥
-   - 不要在公共场合分享配置
+1. **Key Management**
+   - Keep private keys secure
+   - Rotate keys regularly
+   - Don't share configurations publicly
 
-2. **防火墙配置**
+2. **Firewall Configuration**
    ```bash
    ufw allow 443/tcp
    ufw enable
    ```
 
-3. **定期更新**
+3. **Regular Updates**
    ```bash
    git pull
    cargo build --release
-   sudo systemctl restart vless-reality
+   sudo systemctl restart xray-lite
    ```
 
-## 🤝 贡献
+## 🤝 Contributing
 
-欢迎提交 Issue 和 Pull Request！
+Issues and Pull Requests are welcome!
 
-## 📄 许可证
+## 📄 License
 
-MIT License - 详见 [LICENSE](LICENSE) 文件
+MIT License - See [LICENSE](LICENSE) file for details
 
-## 🙏 致谢
+## 🙏 Acknowledgments
 
-- [Xray-core](https://github.com/XTLS/Xray-core) - Reality 协议设计
-- [Tokio](https://tokio.rs/) - 异步运行时
-- [rustls](https://github.com/rustls/rustls) - TLS 实现
+- [Xray-core](https://github.com/XTLS/Xray-core) - Reality protocol design
+- [Tokio](https://tokio.rs/) - Async runtime
+- [rustls](https://github.com/rustls/rustls) - TLS implementation
 
 ## ⭐ Star History
 
-如果这个项目对你有帮助，请给个 Star！
+If this project helps you, please give it a Star!
 
 ---
 
-**注意**: 本项目仅供学习和研究使用，请遵守当地法律法规。
+**Note**: This project is for learning and research purposes only. Please comply with local laws and regulations.
