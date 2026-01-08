@@ -56,6 +56,10 @@ impl RealityHandshake {
         let server_hello_record = server_hello.encode();
         client_stream.write_all(&server_hello_record).await?;
         debug!("ServerHello sent");
+
+        // 7.5 发送虚假 CCS (ChangeCipherSpec) 以满足 Middlebox 兼容模式
+        client_stream.write_all(&[0x14, 0x03, 0x03, 0x00, 0x01, 0x01]).await?;
+        debug!("Dummy CCS sent");
         
         // 8. Derive Handshake Keys
         let transcript1 = vec![client_hello_payload.as_slice(), server_hello.handshake_payload()];
@@ -66,21 +70,24 @@ impl RealityHandshake {
         
         // 9. Send EncryptedExtensions (Seq = 0)
         let mut ee_content = BytesMut::new();
-        // Extension: ALPN
+        // Extension: ALPN (0x0010)
         ee_content.put_u16(16); // Type ALPN
         let mut alpn_list = BytesMut::new();
         alpn_val(&mut alpn_list, b"h2");
         alpn_val(&mut alpn_list, b"http/1.1");
         
-        ee_content.put_u16((alpn_list.len() + 2) as u16); // Ext Data Len
-        ee_content.put_u16(alpn_list.len() as u16);      // Protocol Name List Len
+        ee_content.put_u16((alpn_list.len() + 2) as u16); // Extension Data Length
+        ee_content.put_u16(alpn_list.len() as u16);      // Protocol Name List Length
         ee_content.put_slice(&alpn_list);
 
         let mut ee_msg = BytesMut::new();
         ee_msg.put_u8(8); // Type EncryptedExtensions
         let ee_payload_len = ee_content.len() + 2;
-        ee_msg.put_u8(0); ee_msg.put_u8((ee_payload_len >> 8) as u8); ee_msg.put_u8((ee_payload_len & 0xFF) as u8);
-        ee_msg.put_u16(ee_content.len() as u16); // Extensions Length
+        // Handshake Length (3 bytes)
+        let len_bytes = (ee_payload_len as u32).to_be_bytes();
+        ee_msg.put_u8(len_bytes[1]); ee_msg.put_u8(len_bytes[2]); ee_msg.put_u8(len_bytes[3]);
+        // Extensions Length (2 bytes)
+        ee_msg.put_u16(ee_content.len() as u16); 
         ee_msg.put_slice(&ee_content);
         
         let ee_cipher = keys.encrypt_server_record(0, &ee_msg, 22)?;
@@ -108,7 +115,8 @@ impl RealityHandshake {
         
         let mut fin_msg = BytesMut::new();
         fin_msg.put_u8(20); // Type Finished
-        fin_msg.put_u8(0); fin_msg.put_u8(0); fin_msg.put_u8(verify_data.len() as u8);
+        let fin_len_bytes = (verify_data.len() as u32).to_be_bytes();
+        fin_msg.put_u8(fin_len_bytes[1]); fin_msg.put_u8(fin_len_bytes[2]); fin_msg.put_u8(fin_len_bytes[3]);
         fin_msg.put_slice(&verify_data);
         
         let fin_cipher = keys.encrypt_server_record(2, &fin_msg, 22)?;
@@ -135,13 +143,27 @@ impl RealityHandshake {
                 continue;
             }
             
+            let mut record_data = buf.split_to(5 + len);
+            
             if content_type == 20 { // CCS
-                buf.advance(5 + len);
+                debug!("Skipping CCS record");
                 continue;
             }
             
-            if content_type == 23 { // App Data (Finished)
-                let mut record_data = buf.split_to(5 + len);
+            if content_type == 21 { // Alert
+                let mut header = [0u8; 5];
+                header.copy_from_slice(&record_data[..5]);
+                let ciphertext = &mut record_data[5..];
+                
+                if let Ok((ctype, plen)) = keys.decrypt_client_record(0, &header, ciphertext) {
+                    if ctype == 21 && plen >= 2 {
+                        warn!("Received Client Alert: level={}, description={}", ciphertext[0], ciphertext[1]);
+                    }
+                }
+                return Err(anyhow!("Handshake failed: Received Alert(21) from client"));
+            }
+            
+            if content_type == 23 { // App Data
                 let mut header = [0u8; 5];
                 header.copy_from_slice(&record_data[..5]);
                 let ciphertext = &mut record_data[5..];
