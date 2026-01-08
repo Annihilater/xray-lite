@@ -57,7 +57,7 @@ impl RealityHandshake {
         client_stream.write_all(&server_hello_record).await?;
         debug!("ServerHello sent");
 
-        // 7.5 发送虚假 CCS (ChangeCipherSpec) 以满足 Middlebox 兼容模式
+        // 7.5 发送虚假 CCS
         client_stream.write_all(&[0x14, 0x03, 0x03, 0x00, 0x01, 0x01]).await?;
         debug!("Dummy CCS sent");
         
@@ -70,23 +70,20 @@ impl RealityHandshake {
         
         // 9. Send EncryptedExtensions (Seq = 0)
         let mut ee_content = BytesMut::new();
-        // Extension: ALPN (0x0010)
         ee_content.put_u16(16); // Type ALPN
         let mut alpn_list = BytesMut::new();
         alpn_val(&mut alpn_list, b"h2");
         alpn_val(&mut alpn_list, b"http/1.1");
         
-        ee_content.put_u16((alpn_list.len() + 2) as u16); // Extension Data Length
-        ee_content.put_u16(alpn_list.len() as u16);      // Protocol Name List Length
+        ee_content.put_u16((alpn_list.len() + 2) as u16); 
+        ee_content.put_u16(alpn_list.len() as u16);      
         ee_content.put_slice(&alpn_list);
 
         let mut ee_msg = BytesMut::new();
         ee_msg.put_u8(8); // Type EncryptedExtensions
         let ee_payload_len = ee_content.len() + 2;
-        // Handshake Length (3 bytes)
         let len_bytes = (ee_payload_len as u32).to_be_bytes();
         ee_msg.put_u8(len_bytes[1]); ee_msg.put_u8(len_bytes[2]); ee_msg.put_u8(len_bytes[3]);
-        // Extensions Length (2 bytes)
         ee_msg.put_u16(ee_content.len() as u16); 
         ee_msg.put_slice(&ee_content);
         
@@ -104,6 +101,7 @@ impl RealityHandshake {
         client_stream.write_all(&cert_cipher).await?;
         
         // 10. Send Finished (Seq = 2)
+        // Transcript for Server Finished: CH...Cert
         let transcript2 = vec![
             client_hello_payload.as_slice(), 
             server_hello.handshake_payload(),
@@ -181,13 +179,13 @@ impl RealityHandshake {
         }
         
         // 12. Derive Application Keys
+        // RFC 8446 Section 7.3: Transcript Hash for application keys stops at Server Finished
         let transcript3 = vec![
             client_hello_payload.as_slice(), 
             server_hello.handshake_payload(),
             &ee_msg,
             &cert_msg,
-            &fin_msg, 
-            &client_finished_payload
+            &fin_msg
         ];
         let hash3 = super::crypto::hash_transcript(&transcript3);
         let app_keys = TlsKeys::derive_application_keys(&handshake_secret, &hash3)?;

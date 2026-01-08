@@ -3,7 +3,7 @@ use rand::rngs::OsRng;
 use ring::{aead, digest, hkdf, hmac};
 use x25519_dalek::{PublicKey, StaticSecret};
 
-/// 计算 Transcrip Hash (SHA256)
+/// 计算 Transcript Hash (SHA256)
 pub fn hash_transcript(messages: &[&[u8]]) -> Vec<u8> {
     let mut ctx = digest::Context::new(&digest::SHA256);
     for msg in messages {
@@ -55,10 +55,15 @@ impl TlsKeys {
         shared_secret: &[u8],
         hello_hash: &[u8],
     ) -> Result<(Self, hkdf::Prk)> {
-        let salt = hkdf::Salt::new(hkdf::HKDF_SHA256, &[]);
+        // RFC 8446 Section 7.1: Early Secret = HKDF-Extract(0, 0)
+        // Without PSK, salt is 32 zero bytes for SHA256
+        let salt = hkdf::Salt::new(hkdf::HKDF_SHA256, &[0u8; 32]);
         let early_secret = salt.extract(&[0u8; 32]);
+
+        // derived = HKDF-Expand-Label(Early Secret, "derived", "", 32)
         let derived_secret = expand_label(&early_secret, b"derived", &hash_empty(), 32)?;
 
+        // Handshake Secret = HKDF-Extract(derived_secret, shared_secret)
         let handshake_secret =
             hkdf::Salt::new(hkdf::HKDF_SHA256, &derived_secret).extract(shared_secret);
 
@@ -147,7 +152,6 @@ impl TlsKeys {
         traffic_secret_bytes: &[u8],
         handshake_hash: &[u8],
     ) -> Result<Vec<u8>> {
-        // FIX: Use manual expansion to avoid double-extracting the traffic secret
         let finished_key = expand_label_raw(traffic_secret_bytes, b"finished", &[], 32)?;
         let key = hmac::Key::new(hmac::HMAC_SHA256, &finished_key);
         let tag = hmac::sign(&key, handshake_hash);
@@ -223,24 +227,16 @@ fn expand_label(prk: &hkdf::Prk, label: &[u8], context: &[u8], len: usize) -> Re
     Ok(out)
 }
 
-// Helper to manual expand without Prk object
 fn manual_hkdf_expand(secret: &[u8], info: &[u8], len: usize) -> Result<Vec<u8>> {
     let key = hmac::Key::new(hmac::HMAC_SHA256, secret);
-
-    // HKDF-Expand(PRK, info, L)
-    // T(1) = HMAC-Hash(PRK, T(0) | info | 0x01)
     if len > 32 {
-        return Err(anyhow!("Manual HKDF expand only supports len <= 32"));
+        return Err(anyhow!("Manual HKDF-Expand limit: 32 bytes"));
     }
-
     let mut msg = Vec::with_capacity(info.len() + 1);
     msg.extend_from_slice(info);
-    msg.push(0x01); // Counter
-
+    msg.push(0x01);
     let tag = hmac::sign(&key, &msg);
-    let tag_bytes = tag.as_ref();
-
-    Ok(tag_bytes[..len].to_vec())
+    Ok(tag.as_ref()[..len].to_vec())
 }
 
 fn expand_label_raw(secret: &[u8], label: &[u8], context: &[u8], len: usize) -> Result<Vec<u8>> {
@@ -251,12 +247,10 @@ fn expand_label_raw(secret: &[u8], label: &[u8], context: &[u8], len: usize) -> 
     info.extend_from_slice(&full_label);
     info.push(context.len() as u8);
     info.extend_from_slice(context);
-
     manual_hkdf_expand(secret, &info, len)
 }
 
 fn derive_key_iv(secret: &[u8]) -> Result<(aead::LessSafeKey, [u8; 12])> {
-    // FIX: Use expand_label_raw to avoid double extraction
     let key_bytes = expand_label_raw(secret, b"key", &[], 16)?;
     let unbound_key = aead::UnboundKey::new(&aead::AES_128_GCM, &key_bytes)
         .map_err(|_| anyhow!("Failed to create unbound key"))?;
@@ -265,7 +259,6 @@ fn derive_key_iv(secret: &[u8]) -> Result<(aead::LessSafeKey, [u8; 12])> {
     let iv_bytes = expand_label_raw(secret, b"iv", &[], 12)?;
     let mut iv = [0u8; 12];
     iv.copy_from_slice(&iv_bytes);
-
     Ok((key, iv))
 }
 
