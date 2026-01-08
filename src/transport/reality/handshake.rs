@@ -18,27 +18,31 @@ impl RealityHandshake {
         Self { config }
     }
 
-    /// 完整的 TLS 1.3 握手实现（带 Reality 认证）
     pub async fn perform(&self, mut client_stream: TcpStream) -> Result<super::stream::TlsStream<TcpStream>> {
         // 1. 读取 ClientHello
         let (client_hello, client_hello_raw) = self.read_client_hello(&mut client_stream).await?;
         info!("ClientHello received, SNI: {:?}", client_hello.get_sni());
+        debug!("ClientHello hex (first 100 bytes): {}", hex::encode(&client_hello_raw[..client_hello_raw.len().min(100)]));
 
         // 2. 提取 Client Key Share
         let client_key_share = match client_hello.get_key_share() {
             Some(key) => key,
             None => return Err(anyhow!("No X25519 key share")),
         };
+        debug!("Client Key Share: {}", hex::encode(&client_key_share));
 
         // 3. 生成服务器密钥对
         let crypto = RealityCrypto::new();
         let my_public_key = crypto.get_public_key();
         let shared_secret = crypto.derive_shared_secret(&client_key_share)?;
+        debug!("Server Public Key: {}", hex::encode(&my_public_key));
+        debug!("Shared Secret: {}", hex::encode(&shared_secret));
 
         // 4. 构造 ServerHello（带 Reality 认证）
         use rand::RngCore;
         let mut server_random = [0u8; 32];
         rand::rngs::OsRng.fill_bytes(&mut server_random);
+        debug!("Server Random (before Reality): {}", hex::encode(&server_random));
 
         let mut server_hello = super::tls::ServerHello::new_reality(
             &client_hello.session_id,
@@ -46,74 +50,84 @@ impl RealityHandshake {
             &my_public_key
         )?;
         
-        // 注入 Reality 认证
         server_hello.modify_for_reality(&self.config.private_key, &client_hello.random)?;
+        debug!("Server Random (after Reality): {}", hex::encode(&server_hello.random));
 
         // 5. 发送 ServerHello 和 CCS
-        client_stream.write_all(&server_hello.encode()).await?;
-        client_stream.write_all(&[0x14, 0x03, 0x03, 0x00, 0x01, 0x01]).await?;
-        debug!("ServerHello & CCS sent");
+        let sh_bytes = server_hello.encode();
+        debug!("ServerHello hex: {}", hex::encode(&sh_bytes));
+        client_stream.write_all(&sh_bytes).await?;
+        
+        let ccs = [0x14, 0x03, 0x03, 0x00, 0x01, 0x01];
+        debug!("CCS hex: {}", hex::encode(&ccs));
+        client_stream.write_all(&ccs).await?;
+        info!("ServerHello & CCS sent");
 
         // 6. 推导握手密钥
         let transcript0 = vec![client_hello_raw.as_slice(), server_hello.handshake_payload()];
+        let transcript0_hash = super::crypto::hash_transcript(&transcript0);
+        debug!("Transcript Hash (CH+SH): {}", hex::encode(&transcript0_hash));
+        
         let (mut hs_keys, handshake_secret) = TlsKeys::derive_handshake_keys(
             &shared_secret, 
-            &super::crypto::hash_transcript(&transcript0)
+            &transcript0_hash
         )?;
+        debug!("Server Handshake Traffic Secret: {}", hex::encode(&hs_keys.server_traffic_secret));
         
-        // 7. 生成真实的自签名证书
-        let (cert_msg, cert_key) = self.generate_certificate_message()?;
+        // 7. 构造并发送加密握手消息
         
-        // 8. 构造 EncryptedExtensions
-        let ee_msg = self.build_encrypted_extensions();
+        // EncryptedExtensions (空)
+        let ee_msg = vec![8, 0, 0, 2, 0, 0];
+        debug!("EncryptedExtensions plaintext: {}", hex::encode(&ee_msg));
         
-        // 9. 构造 CertificateVerify（使用真实的签名）
-        let transcript_cv = vec![
-            client_hello_raw.as_slice(),
-            server_hello.handshake_payload(),
-            &ee_msg,
-            &cert_msg
-        ];
-        let hash_cv = super::crypto::hash_transcript(&transcript_cv);
-        let cv_msg = self.build_certificate_verify(&hash_cv, &cert_key)?;
+        let ee_record = hs_keys.encrypt_server_record(0, &ee_msg, 22)?;
+        debug!("EncryptedExtensions encrypted: {}", hex::encode(&ee_record));
+        client_stream.write_all(&ee_record).await?;
         
-        // 10. 构造 Finished
-        let transcript_fin = vec![
+        // Certificate (空)
+        let cert_msg = vec![11, 0, 0, 4, 0, 0, 0, 0];
+        debug!("Certificate plaintext: {}", hex::encode(&cert_msg));
+        
+        let cert_record = hs_keys.encrypt_server_record(1, &cert_msg, 22)?;
+        debug!("Certificate encrypted: {}", hex::encode(&cert_record));
+        client_stream.write_all(&cert_record).await?;
+        
+        // CertificateVerify (虚拟)
+        let cv_msg = self.build_dummy_certificate_verify();
+        debug!("CertificateVerify plaintext: {}", hex::encode(&cv_msg));
+        
+        let cv_record = hs_keys.encrypt_server_record(2, &cv_msg, 22)?;
+        debug!("CertificateVerify encrypted: {}", hex::encode(&cv_record));
+        client_stream.write_all(&cv_record).await?;
+        
+        // Finished
+        let transcript1 = vec![
             client_hello_raw.as_slice(),
             server_hello.handshake_payload(),
             &ee_msg,
             &cert_msg,
             &cv_msg
         ];
-        let hash_fin = super::crypto::hash_transcript(&transcript_fin);
-        let verify_data = TlsKeys::calculate_verify_data(&hs_keys.server_traffic_secret, &hash_fin)?;
+        let hash1 = super::crypto::hash_transcript(&transcript1);
+        debug!("Transcript Hash (for Finished): {}", hex::encode(&hash1));
+        
+        let verify_data = TlsKeys::calculate_verify_data(&hs_keys.server_traffic_secret, &hash1)?;
+        debug!("Verify Data: {}", hex::encode(&verify_data));
         
         let mut fin_msg = BytesMut::new();
-        fin_msg.put_u8(20); // Type: Finished
+        fin_msg.put_u8(20);
         let fin_len = verify_data.len() as u32;
         fin_msg.put_slice(&fin_len.to_be_bytes()[1..4]);
         fin_msg.put_slice(&verify_data);
-        
-        // 11. 发送所有加密握手消息（分别发送）
-        let ee_record = hs_keys.encrypt_server_record(0, &ee_msg, 22)?;
-        client_stream.write_all(&ee_record).await?;
-        debug!("EncryptedExtensions sent (seq=0)");
-        
-        let cert_record = hs_keys.encrypt_server_record(1, &cert_msg, 22)?;
-        client_stream.write_all(&cert_record).await?;
-        debug!("Certificate sent (seq=1)");
-        
-        let cv_record = hs_keys.encrypt_server_record(2, &cv_msg, 22)?;
-        client_stream.write_all(&cv_record).await?;
-        debug!("CertificateVerify sent (seq=2)");
+        debug!("Finished plaintext: {}", hex::encode(&fin_msg));
         
         let fin_record = hs_keys.encrypt_server_record(3, &fin_msg, 22)?;
+        debug!("Finished encrypted: {}", hex::encode(&fin_record));
         client_stream.write_all(&fin_record).await?;
-        debug!("Finished sent (seq=3)");
         
-        info!("Server handshake complete, waiting for client Finished...");
+        info!("All handshake messages sent, waiting for client response...");
 
-        // 12. 读取客户端的 Finished
+        // 8. 读取客户端响应
         let mut buf = BytesMut::with_capacity(4096);
         
         loop {
@@ -133,29 +147,46 @@ impl RealityHandshake {
             }
             
             let mut record_data = buf.split_to(5 + rlen);
+            debug!("Client record received: {}", hex::encode(&record_data));
             
-            if ctype == 20 { continue; } // Skip CCS
+            if ctype == 20 { 
+                debug!("Skipping CCS from client");
+                continue;
+            }
             
             if ctype == 23 {
                 let mut header = [0u8; 5];
                 header.copy_from_slice(&record_data[..5]);
-                let (inner_type, plen) = hs_keys.decrypt_client_record(0, &header, &mut record_data[5..])?;
                 
-                if inner_type == 21 {
-                    let level = if plen > 0 { record_data[5] } else { 0 };
-                    let desc = if plen > 1 { record_data[6] } else { 0 };
-                    error!("Client Alert: level={}, description={}", level, desc);
-                    return Err(anyhow!("Client sent Alert {}/{}", level, desc));
-                }
-                
-                if inner_type == 22 && plen > 0 && record_data[5] == 20 {
-                    info!("Client Finished received!");
-                    break;
+                match hs_keys.decrypt_client_record(0, &header, &mut record_data[5..]) {
+                    Ok((inner_type, plen)) => {
+                        debug!("Decrypted client message: type={}, len={}", inner_type, plen);
+                        debug!("Decrypted content: {}", hex::encode(&record_data[5..5+plen]));
+                        
+                        if inner_type == 21 {
+                            let level = if plen > 0 { record_data[5] } else { 0 };
+                            let desc = if plen > 1 { record_data[6] } else { 0 };
+                            error!("❌ Client Alert: level={}, description={}", level, desc);
+                            error!("Alert details: Level {} = {}, Description {} = {}", 
+                                level, alert_level_name(level),
+                                desc, alert_description_name(desc));
+                            return Err(anyhow!("Client sent Alert {}/{}", level, desc));
+                        }
+                        
+                        if inner_type == 22 && plen > 0 && record_data[5] == 20 {
+                            info!("✅ Client Finished received!");
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to decrypt client record: {}", e);
+                        return Err(e);
+                    }
                 }
             }
         }
         
-        // 13. 推导应用层密钥
+        // 9. 推导应用层密钥
         let transcript_app = vec![
             client_hello_raw.as_slice(),
             server_hello.handshake_payload(),
@@ -170,93 +201,15 @@ impl RealityHandshake {
         Ok(super::stream::TlsStream::new_with_buffer(client_stream, app_keys, buf))
     }
 
-    fn build_encrypted_extensions(&self) -> Vec<u8> {
-        vec![8, 0, 0, 2, 0, 0] // Type: EE, Len: 2, ExtLen: 0
-    }
-
-    fn generate_certificate_message(&self) -> Result<(Vec<u8>, rcgen::Certificate)> {
-        use rcgen::{Certificate, CertificateParams, DistinguishedName};
-        
-        let mut params = CertificateParams::new(vec!["localhost".to_string()]);
-        let mut dn = DistinguishedName::new();
-        dn.push(rcgen::DnType::CommonName, "Reality Server");
-        params.distinguished_name = dn;
-        
-        let cert = Certificate::from_params(params)
-            .map_err(|e| anyhow!("Failed to generate certificate: {}", e))?;
-        
-        let cert_der = cert.serialize_der()
-            .map_err(|e| anyhow!("Failed to serialize certificate: {}", e))?;
-        
-        // 构造 Certificate 握手消息
+    fn build_dummy_certificate_verify(&self) -> Vec<u8> {
+        let dummy_sig = vec![0u8; 64];
         let mut msg = BytesMut::new();
-        msg.put_u8(11); // Type: Certificate
-        
-        // 消息体
-        let mut body = BytesMut::new();
-        body.put_u8(0); // Certificate Request Context (empty)
-        
-        // Certificate List
-        let cert_list_len = 3 + cert_der.len() + 2; // cert_len(3) + cert + ext_len(2)
-        body.put_u8(((cert_list_len >> 16) & 0xFF) as u8);
-        body.put_u8(((cert_list_len >> 8) & 0xFF) as u8);
-        body.put_u8((cert_list_len & 0xFF) as u8);
-        
-        // Single Certificate Entry
-        body.put_u8(((cert_der.len() >> 16) & 0xFF) as u8);
-        body.put_u8(((cert_der.len() >> 8) & 0xFF) as u8);
-        body.put_u8((cert_der.len() & 0xFF) as u8);
-        body.put_slice(&cert_der);
-        body.put_u16(0); // Extensions (empty)
-        
-        // 消息长度
-        let body_len = body.len() as u32;
-        msg.put_slice(&body_len.to_be_bytes()[1..4]);
-        msg.put_slice(&body);
-        
-        Ok((msg.to_vec(), cert))
-    }
-
-    fn build_certificate_verify(&self, transcript_hash: &[u8], cert: &rcgen::Certificate) -> Result<Vec<u8>> {
-        use sha2::{Sha256, Digest};
-        
-        // 构造签名内容（TLS 1.3 格式）
-        let mut content = Vec::new();
-        content.extend_from_slice(&[0x20u8; 64]); // 64 个空格
-        content.extend_from_slice(b"TLS 1.3, server CertificateVerify");
-        content.push(0x00);
-        content.extend_from_slice(transcript_hash);
-        
-        // 计算内容的 SHA256 哈希
-        let mut hasher = Sha256::new();
-        hasher.update(&content);
-        let hash = hasher.finalize();
-        
-        // 使用 ring 进行 ECDSA 签名
-        use ring::signature::{EcdsaKeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
-        use ring::rand::SystemRandom;
-        
-        let rng = SystemRandom::new();
-        
-        // 从证书获取私钥 DER
-        let key_der = cert.serialize_private_key_der();
-        
-        let key_pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &key_der, &rng)
-            .map_err(|e| anyhow!("Failed to parse key: {:?}", e))?;
-        
-        let signature = key_pair.sign(&rng, &hash)
-            .map_err(|e| anyhow!("Failed to sign: {:?}", e))?;
-        
-        let mut msg = BytesMut::new();
-        msg.put_u8(15); // Type: CertificateVerify
-        
-        let body_len = 2 + 2 + signature.as_ref().len();
-        msg.put_slice(&(body_len as u32).to_be_bytes()[1..4]);
+        msg.put_u8(15); // Type
+        msg.put_u8(0); msg.put_u8(0); msg.put_u8(66); // Length
         msg.put_u16(0x0403); // Algorithm: ecdsa_secp256r1_sha256
-        msg.put_u16(signature.as_ref().len() as u16);
-        msg.put_slice(signature.as_ref());
-        
-        Ok(msg.to_vec())
+        msg.put_u16(64); // Signature length
+        msg.put_slice(&dummy_sig);
+        msg.to_vec()
     }
 
     async fn read_client_hello(&self, stream: &mut TcpStream) -> Result<(ClientHello, Vec<u8>)> {
@@ -272,5 +225,44 @@ impl RealityHandshake {
                 }
             }
         }
+    }
+}
+
+fn alert_level_name(level: u8) -> &'static str {
+    match level {
+        1 => "Warning",
+        2 => "Fatal",
+        _ => "Unknown"
+    }
+}
+
+fn alert_description_name(desc: u8) -> &'static str {
+    match desc {
+        0 => "close_notify",
+        10 => "unexpected_message",
+        20 => "bad_record_mac",
+        21 => "decryption_failed",
+        22 => "record_overflow",
+        40 => "handshake_failure",
+        42 => "bad_certificate",
+        43 => "unsupported_certificate",
+        44 => "certificate_revoked",
+        45 => "certificate_expired",
+        46 => "certificate_unknown",
+        47 => "illegal_parameter",
+        48 => "unknown_ca",
+        49 => "access_denied",
+        50 => "decode_error",
+        51 => "decrypt_error",
+        80 => "internal_error",
+        86 => "inappropriate_fallback",
+        90 => "user_canceled",
+        109 => "missing_extension",
+        110 => "unsupported_extension",
+        112 => "unrecognized_name",
+        113 => "bad_certificate_status_response",
+        116 => "certificate_required",
+        120 => "no_application_protocol",
+        _ => "unknown"
     }
 }
