@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use bytes::{BytesMut, Buf, BufMut};
+use bytes::{BytesMut, Buf};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tracing::{debug, info, warn};
@@ -58,43 +58,61 @@ impl RealityHandshake {
             &super::crypto::hash_transcript(&transcript0)
         )?;
         
-        // 7. EncryptedExtensions + Finished (bundled, no Certificate)
-        // This mimics a PSK-based handshake where Certificate is omitted
+        // 7. Build and send encrypted handshake messages
         
-        let mut ee_msg = BytesMut::new();
-        ee_msg.put_u8(8); // Type: EncryptedExtensions
-        ee_msg.put_u8(0); ee_msg.put_u8(0); ee_msg.put_u8(2);
-        ee_msg.put_u16(0); // No extensions
+        // 7.1 EncryptedExtensions (empty)
+        let ee_msg = vec![8, 0, 0, 2, 0, 0]; // Type: EE, Len: 2, ExtLen: 0
         
-        // Transcript for Finished: CH + SH + EE
-        let transcript1 = vec![
-            client_hello_payload.as_slice(), 
+        // 7.2 Certificate (with dummy cert)
+        let cert_msg = super::cert_gen::generate_dummy_certificate();
+        
+        // 7.3 CertificateVerify
+        let transcript_cv = vec![
+            client_hello_payload.as_slice(),
             server_hello.handshake_payload(),
-            &ee_msg
+            &ee_msg,
+            &cert_msg
         ];
-        let hash1 = super::crypto::hash_transcript(&transcript1);
-        let verify_data = TlsKeys::calculate_verify_data(&hs_keys.server_traffic_secret, &hash1)?;
+        let hash_cv = super::crypto::hash_transcript(&transcript_cv);
+        let cv_msg = super::cert_gen::generate_certificate_verify(&hash_cv);
+        
+        // 7.4 Finished
+        let transcript_fin = vec![
+            client_hello_payload.as_slice(),
+            server_hello.handshake_payload(),
+            &ee_msg,
+            &cert_msg,
+            &cv_msg
+        ];
+        let hash_fin = super::crypto::hash_transcript(&transcript_fin);
+        let verify_data = TlsKeys::calculate_verify_data(&hs_keys.server_traffic_secret, &hash_fin)?;
         
         let mut fin_msg = BytesMut::new();
-        fin_msg.put_u8(20); // Type: Finished
-        let fin_len = verify_data.len();
-        fin_msg.put_u8(((fin_len >> 16) & 0xFF) as u8);
-        fin_msg.put_u8(((fin_len >> 8) & 0xFF) as u8);
-        fin_msg.put_u8((fin_len & 0xFF) as u8);
-        fin_msg.put_slice(&verify_data);
+        fin_msg.extend_from_slice(&[20]); // Type: Finished
+        let fin_len_bytes = (verify_data.len() as u32).to_be_bytes();
+        fin_msg.extend_from_slice(&fin_len_bytes[1..4]);
+        fin_msg.extend_from_slice(&verify_data);
         
-        // Bundle EE + Fin in one record
-        let mut bundle = BytesMut::new();
-        bundle.put_slice(&ee_msg);
-        bundle.put_slice(&fin_msg);
+        // 8. Send all encrypted messages separately
+        let ee_record = hs_keys.encrypt_server_record(0, &ee_msg, 22)?;
+        client_stream.write_all(&ee_record).await?;
+        debug!("EncryptedExtensions sent (seq=0)");
         
-        let record = hs_keys.encrypt_server_record(0, &bundle, 22)?;
-        client_stream.write_all(&record).await?;
-        debug!("EncryptedExtensions + Finished sent (bundled)");
+        let cert_record = hs_keys.encrypt_server_record(1, &cert_msg, 22)?;
+        client_stream.write_all(&cert_record).await?;
+        debug!("Certificate sent (seq=1)");
+        
+        let cv_record = hs_keys.encrypt_server_record(2, &cv_msg, 22)?;
+        client_stream.write_all(&cv_record).await?;
+        debug!("CertificateVerify sent (seq=2)");
+        
+        let fin_record = hs_keys.encrypt_server_record(3, &fin_msg, 22)?;
+        client_stream.write_all(&fin_record).await?;
+        debug!("Finished sent (seq=3)");
         
         info!("Server handshake complete, waiting for client Finished...");
 
-        // 8. Read Client Finished
+        // 9. Read Client Finished
         let mut buf = BytesMut::with_capacity(4096);
         
         loop {
@@ -123,7 +141,7 @@ impl RealityHandshake {
                 let (inner_type, plen) = hs_keys.decrypt_client_record(0, &header, &mut record_data[5..])?;
                 
                 if inner_type == 21 {
-                    warn!("Client Alert: {}/{}", record_data[5], if plen > 1 { record_data[6] } else { 0 });
+                    warn!("Client Alert: {}/{}", record_data[5], if plen > 1 { record_data[6]} else { 0 });
                     return Err(anyhow!("Client sent Alert"));
                 }
                 
@@ -134,12 +152,13 @@ impl RealityHandshake {
             }
         }
         
-        // 9. Derive Application Keys
-        // Transcript: CH + SH + EE + Fin (no Certificate)
+        // 10. Derive Application Keys
         let transcript_app = vec![
-            client_hello_payload.as_slice(), 
+            client_hello_payload.as_slice(),
             server_hello.handshake_payload(),
             &ee_msg,
+            &cert_msg,
+            &cv_msg,
             &fin_msg
         ];
         let app_keys = TlsKeys::derive_application_keys(&handshake_secret, &super::crypto::hash_transcript(&transcript_app))?;

@@ -1,5 +1,6 @@
 mod auth;
 mod cert_fetch;
+mod cert_gen;
 pub mod crypto;
 mod handshake;
 mod server;
