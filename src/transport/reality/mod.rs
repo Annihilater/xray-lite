@@ -1,6 +1,8 @@
 mod auth;
+pub mod crypto;
 mod handshake;
 mod server;
+pub mod stream;
 mod tls;
 
 pub use auth::{RealityAuth, ServerHelloModifier};

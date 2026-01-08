@@ -207,6 +207,17 @@ impl ClientHello {
     pub fn get_random(&self) -> &[u8; 32] {
         &self.random
     }
+
+    /// 获取 Key Share (X25519 public key)
+    pub fn get_key_share(&self) -> Option<Vec<u8>> {
+        for ext in &self.extensions {
+            if ext.extension_type == 0x0033 {
+                // Key Share
+                return Extension::parse_client_key_share(&ext.data);
+            }
+        }
+        None
+    }
 }
 
 /// TLS 扩展
@@ -248,14 +259,50 @@ impl Extension {
         if data.len() < 5 {
             return None;
         }
-
-        // SNI 格式: [list_length(2)] [type(1)] [name_length(2)] [name]
         let name_length = u16::from_be_bytes([data[3], data[4]]) as usize;
         if data.len() < 5 + name_length {
             return None;
         }
-
         String::from_utf8(data[5..5 + name_length].to_vec()).ok()
+    }
+
+    /// 解析 Key Share 扩展 (ClientHello)
+    pub fn parse_client_key_share(data: &[u8]) -> Option<Vec<u8>> {
+        if data.len() < 2 {
+            return None;
+        }
+        let mut cursor = Cursor::new(data);
+        cursor.advance(2);
+
+        while cursor.position() < data.len() as u64 {
+            let mut group_bytes = [0u8; 2];
+            if cursor.remaining() < 2 {
+                break;
+            }
+            cursor.copy_to_slice(&mut group_bytes);
+            let group = u16::from_be_bytes(group_bytes);
+
+            let mut len_bytes = [0u8; 2];
+            if cursor.remaining() < 2 {
+                break;
+            }
+            cursor.copy_to_slice(&mut len_bytes);
+            let length = u16::from_be_bytes(len_bytes) as usize;
+
+            if cursor.remaining() < length {
+                break;
+            }
+
+            if group == 0x001d {
+                // X25519
+                let mut key = vec![0u8; length];
+                cursor.copy_to_slice(&mut key);
+                return Some(key);
+            } else {
+                cursor.advance(length);
+            }
+        }
+        None
     }
 }
 
@@ -286,6 +333,84 @@ impl ServerHello {
         modifier.modify_server_hello(&mut self.raw_data, client_random)?;
 
         Ok(())
+    }
+
+    /// 构造一个新的 ServerHello
+    pub fn new_reality(
+        client_session_id: &[u8],
+        random: [u8; 32],
+        key_share_data: &[u8],
+    ) -> Result<Self> {
+        use bytes::BufMut; // Added for BufMut trait
+
+        let mut payload = BytesMut::new();
+
+        // 1. Handshake Header (Updated later)
+        payload.put_u8(HandshakeType::ServerHello as u8);
+        payload.put_u8(0);
+        payload.put_u8(0);
+        payload.put_u8(0); // Length placeholder
+
+        // 2. Legacy Version (0x0303 for TLS 1.2 compatibility)
+        payload.put_u16(0x0303);
+
+        // 3. Random (Reality Auth injected here)
+        payload.put_slice(&random);
+
+        // 4. Legacy Session ID Echo
+        payload.put_u8(client_session_id.len() as u8);
+        payload.put_slice(client_session_id);
+
+        // 5. Cipher Suite (TLS_AES_128_GCM_SHA256)
+        payload.put_u16(0x1301);
+
+        // 6. Compression Method (0)
+        payload.put_u8(0);
+
+        // 7. Extensions
+        let mut extensions_block = BytesMut::new();
+
+        // 7.1 Supported Versions (TLS 1.3)
+        // Type (0x002b), Len (2), Version (0x0304)
+        extensions_block.put_u16(0x002b);
+        extensions_block.put_u16(2);
+        extensions_block.put_u16(0x0304);
+
+        // 7.2 Key Share
+        // Type (0x0033), Len (4 + key_len), Group(2), KeyLen(2), Key
+        extensions_block.put_u16(0x0033);
+        let ks_len = 4 + key_share_data.len();
+        extensions_block.put_u16(ks_len as u16);
+        extensions_block.put_u16(0x001d); // X25519
+        extensions_block.put_u16(key_share_data.len() as u16);
+        extensions_block.put_slice(key_share_data);
+
+        // Write Extensions Length and Block
+        payload.put_u16(extensions_block.len() as u16);
+        payload.put_slice(&extensions_block);
+
+        // Fix Handshake Length (payload len - 4 bytes header)
+        let total_len = payload.len() - 4;
+        let len_bytes = (total_len as u32).to_be_bytes();
+        payload[1] = len_bytes[1];
+        payload[2] = len_bytes[2];
+        payload[3] = len_bytes[3];
+
+        Ok(ServerHello {
+            raw_data: payload.to_vec(),
+        })
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        use bytes::BufMut; // Added for BufMut trait
+
+        // Wrap in TLS Record Layer
+        let mut record = BytesMut::new();
+        record.put_u8(ContentType::Handshake as u8);
+        record.put_u16(0x0303); // Legacy Record Version
+        record.put_u16(self.raw_data.len() as u16);
+        record.put_slice(&self.raw_data);
+        record.to_vec()
     }
 }
 

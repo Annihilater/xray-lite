@@ -38,7 +38,7 @@ impl RealityServer {
     }
 
     /// 处理传入的 TLS 连接
-    pub async fn accept(&self, stream: TcpStream) -> Result<TcpStream> {
+    pub async fn accept(&self, stream: TcpStream) -> Result<super::stream::TlsStream<TcpStream>> {
         debug!("接收到新的 Reality 连接");
 
         // 使用 RealityHandshake 执行完整的 TLS 握手
