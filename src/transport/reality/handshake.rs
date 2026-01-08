@@ -101,18 +101,17 @@ impl RealityHandshake {
         fin_msg.put_slice(&verify_data);
         debug!("Finished plaintext: {}", hex::encode(&fin_msg));
         
-        // 发送加密消息
-        let ee_record = hs_keys.encrypt_server_record(0, &ee_msg, 22)?;
-        debug!("EncryptedExtensions encrypted (seq=0): {}", hex::encode(&ee_record));
-        client_stream.write_all(&ee_record).await?;
+        // 发送加密消息 - 打包成一个 TLS Record
+        let mut bundle = BytesMut::new();
+        bundle.put_slice(&ee_msg);
+        bundle.put_slice(&cert_msg);
+        bundle.put_slice(&fin_msg);
         
-        let cert_record = hs_keys.encrypt_server_record(1, &cert_msg, 22)?;
-        debug!("Certificate encrypted (seq=1): {}", hex::encode(&cert_record));
-        client_stream.write_all(&cert_record).await?;
+        debug!("Bundled handshake messages (plaintext): {}", hex::encode(&bundle));
         
-        let fin_record = hs_keys.encrypt_server_record(2, &fin_msg, 22)?;
-        debug!("Finished encrypted (seq=2): {}", hex::encode(&fin_record));
-        client_stream.write_all(&fin_record).await?;
+        let bundled_record = hs_keys.encrypt_server_record(0, &bundle, 22)?;
+        debug!("Bundled handshake messages (encrypted): {}", hex::encode(&bundled_record));
+        client_stream.write_all(&bundled_record).await?;
         
         info!("Server handshake complete, waiting for client Finished...");
 
