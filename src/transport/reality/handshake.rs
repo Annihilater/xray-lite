@@ -11,11 +11,15 @@ use super::crypto::{RealityCrypto, TlsKeys};
 #[derive(Clone)]
 pub struct RealityHandshake {
     config: RealityConfig,
+    cached_cert: Option<Vec<u8>>,
 }
 
 impl RealityHandshake {
     pub fn new(config: RealityConfig) -> Self {
-        Self { config }
+        Self { 
+            config,
+            cached_cert: None,
+        }
     }
 
     pub async fn perform(&self, mut client_stream: TcpStream) -> Result<super::stream::TlsStream<TcpStream>> {
@@ -58,53 +62,34 @@ impl RealityHandshake {
             &super::crypto::hash_transcript(&transcript0)
         )?;
         
-        // 7. Build EncryptedExtensions with ALPN
+        // 7. EncryptedExtensions (empty for now)
         let mut ee_msg = BytesMut::new();
-        ee_msg.put_u8(8); // Handshake Type: EncryptedExtensions
+        ee_msg.put_u8(8); // Type: EncryptedExtensions
+        ee_msg.put_u8(0); ee_msg.put_u8(0); ee_msg.put_u8(2); // Length: 2
+        ee_msg.put_u16(0); // Extensions Length: 0
         
-        // Build extensions
-        let mut extensions = BytesMut::new();
-        
-        // ALPN Extension (0x0010)
-        extensions.put_u16(0x0010); // Extension Type
-        
-        // ALPN protocol list
-        let mut alpn_list = BytesMut::new();
-        // Protocol: "h2" (length-prefixed)
-        alpn_list.put_u8(2); // Length of "h2"
-        alpn_list.put_slice(b"h2");
-        // Protocol: "http/1.1" (length-prefixed)
-        alpn_list.put_u8(8); // Length of "http/1.1"
-        alpn_list.put_slice(b"http/1.1");
-        
-        // Extension Data Length = ProtocolNameListLength(2) + ProtocolNameList
-        let ext_data_len = 2 + alpn_list.len();
-        extensions.put_u16(ext_data_len as u16);
-        extensions.put_u16(alpn_list.len() as u16); // ProtocolNameListLength
-        extensions.put_slice(&alpn_list);
-        
-        // Handshake message length = ExtensionsLength(2) + Extensions
-        let ee_body_len = 2 + extensions.len();
-        ee_msg.put_u8(((ee_body_len >> 16) & 0xFF) as u8);
-        ee_msg.put_u8(((ee_body_len >> 8) & 0xFF) as u8);
-        ee_msg.put_u8((ee_body_len & 0xFF) as u8);
-        
-        ee_msg.put_u16(extensions.len() as u16); // Extensions Length
-        ee_msg.put_slice(&extensions);
-        
-        // Send EE (Seq 0)
         let ee_record = hs_keys.encrypt_server_record(0, &ee_msg, 22)?;
         client_stream.write_all(&ee_record).await?;
         debug!("EncryptedExtensions sent (seq=0)");
         
-        // 8. Certificate (Empty)
-        let mut cert_msg = BytesMut::new();
-        cert_msg.put_u8(11); // Type: Certificate
-        cert_msg.put_u8(0); cert_msg.put_u8(0); cert_msg.put_u8(4); // Length: 4
-        cert_msg.put_u8(0); // CertificateRequestContext length: 0
-        cert_msg.put_u8(0); cert_msg.put_u8(0); cert_msg.put_u8(0); // CertificateList length: 0
+        // 8. Fetch and send real certificate
+        let cert_msg = match super::cert_fetch::fetch_certificate(&self.config.dest).await {
+            Ok(cert) => {
+                debug!("Fetched certificate from {}, len={}", self.config.dest, cert.len());
+                cert
+            },
+            Err(e) => {
+                warn!("Failed to fetch certificate: {}, using empty cert", e);
+                // Fallback to empty certificate
+                let mut empty_cert = BytesMut::new();
+                empty_cert.put_u8(11); // Type: Certificate
+                empty_cert.put_u8(0); empty_cert.put_u8(0); empty_cert.put_u8(4);
+                empty_cert.put_u8(0); // Context
+                empty_cert.put_u8(0); empty_cert.put_u8(0); empty_cert.put_u8(0); // List len
+                empty_cert.to_vec()
+            }
+        };
         
-        // Send Certificate (Seq 1)
         let cert_record = hs_keys.encrypt_server_record(1, &cert_msg, 22)?;
         client_stream.write_all(&cert_record).await?;
         debug!("Certificate sent (seq=1)");
@@ -127,7 +112,6 @@ impl RealityHandshake {
         fin_msg.put_u8((fin_len & 0xFF) as u8);
         fin_msg.put_slice(&verify_data);
         
-        // Send Finished (Seq 2)
         let fin_record = hs_keys.encrypt_server_record(2, &fin_msg, 22)?;
         client_stream.write_all(&fin_record).await?;
         debug!("Finished sent (seq=2)");
