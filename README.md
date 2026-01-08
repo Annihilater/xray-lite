@@ -1,4 +1,4 @@
-# VLESS+Reality+XHTTP Rust 实现
+# Xray-Lite - 轻量级 Xray Rust 实现
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
@@ -37,8 +37,8 @@
 
 ```bash
 # 克隆项目
-git clone https://github.com/yourusername/vless-reality-xhttp-rust.git
-cd vless-reality-xhttp-rust
+git clone https://github.com/yourusername/xray-lite.git
+cd xray-lite
 
 # 一键部署
 ./deploy.sh

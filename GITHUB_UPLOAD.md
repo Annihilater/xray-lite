@@ -13,7 +13,7 @@ Git 仓库已初始化并完成首次提交：
 ### 步骤 1: 在 GitHub 创建新仓库
 
 1. 访问 https://github.com/new
-2. 仓库名称: `vless-reality-xhttp-rust`
+2. 仓库名称: `xray-lite`
 3. 描述: `High-performance VLESS+Reality+XHTTP proxy server in Rust, 100% compatible with Xray clients`
 4. 选择 Public 或 Private
 5. **不要**勾选 "Initialize this repository with a README"
@@ -22,13 +22,13 @@ Git 仓库已初始化并完成首次提交：
 ### 步骤 2: 连接远程仓库
 
 ```bash
-cd /home/biubiuboy/vless-reality-xhttp-rust
+cd /home/biubiuboy/xray-lite
 
 # 添加远程仓库 (替换 YOUR_USERNAME)
-git remote add origin https://github.com/YOUR_USERNAME/vless-reality-xhttp-rust.git
+git remote add origin https://github.com/YOUR_USERNAME/xray-lite.git
 
 # 或使用 SSH (推荐)
-git remote add origin git@github.com:YOUR_USERNAME/vless-reality-xhttp-rust.git
+git remote add origin git@github.com:YOUR_USERNAME/xray-lite.git
 ```
 
 ### 步骤 3: 推送代码
@@ -152,9 +152,9 @@ git push origin v0.1.0
 在 README.md 顶部添加更多 badges:
 
 ```markdown
-[![Build Status](https://github.com/YOUR_USERNAME/vless-reality-xhttp-rust/workflows/Rust%20CI/badge.svg)](https://github.com/YOUR_USERNAME/vless-reality-xhttp-rust/actions)
-[![GitHub release](https://img.shields.io/github/release/YOUR_USERNAME/vless-reality-xhttp-rust.svg)](https://github.com/YOUR_USERNAME/vless-reality-xhttp-rust/releases)
-[![GitHub stars](https://img.shields.io/github/stars/YOUR_USERNAME/vless-reality-xhttp-rust.svg)](https://github.com/YOUR_USERNAME/vless-reality-xhttp-rust/stargazers)
+[![Build Status](https://github.com/YOUR_USERNAME/xray-lite/workflows/Rust%20CI/badge.svg)](https://github.com/YOUR_USERNAME/xray-lite/actions)
+[![GitHub release](https://img.shields.io/github/release/YOUR_USERNAME/xray-lite.svg)](https://github.com/YOUR_USERNAME/xray-lite/releases)
+[![GitHub stars](https://img.shields.io/github/stars/YOUR_USERNAME/xray-lite.svg)](https://github.com/YOUR_USERNAME/xray-lite/stargazers)
 ```
 
 ## ✅ 检查清单

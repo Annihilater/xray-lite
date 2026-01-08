@@ -49,10 +49,10 @@
 ### 方法 1: 使用 HTTPS
 
 ```bash
-cd /home/biubiuboy/vless-reality-xhttp-rust
+cd /home/biubiuboy/xray-lite
 
 # 添加远程仓库 (替换 YOUR_USERNAME)
-git remote add origin https://github.com/YOUR_USERNAME/vless-reality-xhttp-rust.git
+git remote add origin https://github.com/YOUR_USERNAME/xray-lite.git
 
 # 推送代码
 git branch -M main
@@ -62,10 +62,10 @@ git push -u origin main
 ### 方法 2: 使用 SSH (推荐)
 
 ```bash
-cd /home/biubiuboy/vless-reality-xhttp-rust
+cd /home/biubiuboy/xray-lite
 
 # 添加远程仓库 (替换 YOUR_USERNAME)
-git remote add origin git@github.com:YOUR_USERNAME/vless-reality-xhttp-rust.git
+git remote add origin git@github.com:YOUR_USERNAME/xray-lite.git
 
 # 推送代码
 git branch -M main
@@ -75,7 +75,7 @@ git push -u origin main
 ## 📋 GitHub 仓库设置建议
 
 ### 仓库信息
-- **名称**: `vless-reality-xhttp-rust`
+- **名称**: `xray-lite`
 - **描述**: `High-performance VLESS+Reality+XHTTP proxy server in Rust, 100% compatible with Xray clients`
 - **可见性**: Public 或 Private
 
@@ -115,7 +115,7 @@ privacy
 ## 📁 项目结构
 
 ```
-vless-reality-xhttp-rust/
+xray-lite/
 ├── README.md              ⭐ 项目介绍
 ├── DESIGN.md              📚 架构设计
 ├── USAGE.md               📖 使用指南

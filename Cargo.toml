@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["Your Name <your.email@example.com>"]
 description = "Lightweight VLESS+Reality+XHTTP proxy implementation in Rust"
 license = "MIT"
-repository = "https://github.com/yourusername/vless-reality-xhttp-rust"
+repository = "https://github.com/yourusername/xray-lite"
 
 [dependencies]
 # 异步运行时

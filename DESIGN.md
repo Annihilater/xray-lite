@@ -295,7 +295,7 @@ pub fn generate_uuid() -> Uuid;
 ## 项目结构
 
 ```
-vless-reality-xhttp-rust/
+xray-lite/
 ├── Cargo.toml
 ├── src/
 │   ├── main.rs                 # 程序入口

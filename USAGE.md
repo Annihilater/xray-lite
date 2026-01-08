@@ -6,8 +6,8 @@
 
 ```bash
 # 克隆项目
-git clone https://github.com/yourusername/vless-reality-xhttp-rust.git
-cd vless-reality-xhttp-rust
+git clone https://github.com/yourusername/xray-lite.git
+cd xray-lite
 
 # 运行一键部署脚本
 ./deploy.sh
@@ -296,7 +296,7 @@ sysctl -w net.core.wmem_max=26214400
 
 ## 🆘 获取帮助
 
-- GitHub Issues: [提交问题](https://github.com/yourusername/vless-reality-xhttp-rust/issues)
+- GitHub Issues: [提交问题](https://github.com/yourusername/xray-lite/issues)
 - 查看日志: `sudo journalctl -u vless-reality -f`
 - 详细日志: `RUST_LOG=debug cargo run`
 
