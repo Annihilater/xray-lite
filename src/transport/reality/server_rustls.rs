@@ -23,7 +23,7 @@ use bytes::Buf;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 use hkdf::Hkdf;
 use sha2::Sha256;
-use aes_gcm::{Aes128Gcm, KeyInit, AeadInPlace, Nonce};
+use aes_gcm::{Aes256Gcm, KeyInit, AeadInPlace, Nonce};
 
 use super::hello_parser::{self, ClientHelloInfo};
 
@@ -188,12 +188,12 @@ impl RealityServerRustls {
             Some(&info.client_random[0..20]), // Salt = Random[0..20]
             shared_secret.as_bytes()         // IKM = Shared Secret
         );
-        let mut auth_key = [0u8; 16]; // Reality uses AES-128 (16 bytes key)
+        let mut auth_key = [0u8; 32]; // Reality uses AES-256 (32 bytes key)
         if hk.expand(b"REALITY", &mut auth_key).is_err() { return false; }
 
-        // 4. AEAD Decrypt (AES-128-GCM)
-        let key = aes_gcm::Key::<aes_gcm::Aes128Gcm>::from_slice(&auth_key);
-        let cipher = aes_gcm::Aes128Gcm::new(key);
+        // 4. AEAD Decrypt (AES-256-GCM)
+        let key = aes_gcm::Key::<aes_gcm::Aes256Gcm>::from_slice(&auth_key);
+        let cipher = aes_gcm::Aes256Gcm::new(key);
         let nonce = Nonce::from_slice(&info.client_random[20..32]); // Nonce = Random[20..32] (12 bytes)
 
         // AAD Strategy: Reality uses the Handshake message (excluding Record Header)
