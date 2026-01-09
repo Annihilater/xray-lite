@@ -86,26 +86,52 @@ FALLBACK_RA_URL="https://raw.githubusercontent.com/${REPO}/main/release_artifact
 download_file() {
     local url=$1
     local output=$2
-    if command -v wget &> /dev/null; then
-        wget -q --show-progress "$url" -O "$output"
-    elif command -v curl &> /dev/null; then
-        curl -L --progress-bar "$url" -o "$output"
+    
+    # Try curl first with --fail to handle 404s correctly
+    if command -v curl &> /dev/null; then
+        if curl -L -f --progress-bar "$url" -o "$output"; then
+            return 0
+        else
+            rm -f "$output" # Ensure no partial/error file is left
+            return 1
+        fi
+    elif command -v wget &> /dev/null; then
+        if wget -q --show-progress "$url" -O "$output"; then
+            return 0
+        else
+            rm -f "$output"
+            return 1
+        fi
     else
         return 1
     fi
 }
 
-if download_file "$DOWNLOAD_URL" "xray-lite.tar.gz"; then
-    echo -e "${GREEN}✓ Download complete / 下载完成${NC}"
-    if [ ! -s xray-lite.tar.gz ]; then rm xray-lite.tar.gz; fi
-fi
-
-if [ ! -f xray-lite.tar.gz ]; then
-    echo -e "${YELLOW}Release download failed, trying raw artifacts... / Release 下载失败，尝试原始构建...${NC}"
-    if download_file "$FALLBACK_RA_URL" "xray-lite.tar.gz"; then
-         echo -e "${GREEN}✓ Download complete (Artifacts) / 下载完成${NC}"
+# Function to check if file is valid gzip
+is_valid_gzip() {
+    local file=$1
+    if gzip -t "$file" >/dev/null 2>&1; then
+        return 0
     else
-         echo -e "${RED}Download failed! / 下载失败!${NC}"
+        echo -e "${YELLOW}Warning: Downloaded file is not a valid gzip package.${NC}"
+        rm -f "$file"
+        return 1
+    fi
+}
+
+echo "Attempting download..."
+
+# Try Release URL first
+if download_file "$DOWNLOAD_URL" "xray-lite.tar.gz" && is_valid_gzip "xray-lite.tar.gz"; then
+    echo -e "${GREEN}✓ Download complete (Release)${NC}"
+else
+    echo -e "${YELLOW}Release download failed/invalid, trying fallback to raw artifacts...${NC}"
+    # Try Fallback URL
+    if download_file "$FALLBACK_RA_URL" "xray-lite.tar.gz" && is_valid_gzip "xray-lite.tar.gz"; then
+         echo -e "${GREEN}✓ Download complete (Artifacts)${NC}"
+    else
+         echo -e "${RED}Download failed! Could not retrieve valid binary.${NC}"
+         echo "Please check your network or try again later."
          exit 1
     fi
 fi
