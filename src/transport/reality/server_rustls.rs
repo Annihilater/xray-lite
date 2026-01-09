@@ -75,7 +75,7 @@ impl RealityServerRustls {
     /// Returns Ok(stream) if valid Reality connection.
     /// Returns Err if connection was rejected or handled via fallback.
     pub async fn accept(&self, mut stream: TcpStream) -> Result<tokio_rustls::server::TlsStream<TcpStream>> {
-        let mut buf = vec![0u8; 1024]; // Initial peek buffer
+        let mut buf = vec![0u8; 4096]; // Peak buffer larger to accommodate full ClientHello (with padding)
         let n = stream.peek(&mut buf).await?;
         if n == 0 {
             bail!("Connection closed during peek");
@@ -102,11 +102,11 @@ impl RealityServerRustls {
                  }
             },
             Ok(None) => {
-                debug!("Fallback decision: Not a TLS ClientHello or incomplete");
+                info!("Fallback decision: Not a recognized TLS ClientHello (or incomplete peek). Peek len: {}, First byte: 0x{:02x}", peek_slice.len(), if !peek_slice.is_empty() { peek_slice[0] } else { 0 });
                 true
             }, 
             Err(e) => {
-                warn!("Fallback decision: ClientHello parsing error: {}", e);
+                error!("Fallback decision: ClientHello parsing error: {}", e);
                 true
             }
         };
