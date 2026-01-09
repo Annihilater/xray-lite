@@ -101,8 +101,14 @@ impl RealityServerRustls {
                      false // Verification passed!
                  }
             },
-            Ok(None) => true, // Not a ClientHello or incomplete (we treat incomplete as fallback for simplicity, or we could wait more)
-            Err(_) => true // Parse error
+            Ok(None) => {
+                debug!("Fallback decision: Not a TLS ClientHello or incomplete");
+                true
+            }, 
+            Err(e) => {
+                warn!("Fallback decision: ClientHello parsing error: {}", e);
+                true
+            }
         };
 
         if should_fallback {
