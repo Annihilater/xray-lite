@@ -161,7 +161,15 @@ impl Server {
         use tokio::io::AsyncReadExt;
         stream.read_buf(&mut buf).await?;
 
-        let request = codec.decode_request(&mut buf)?;
+        let request = match codec.decode_request(&mut buf) {
+            Ok(req) => req,
+            Err(e) => {
+                let bytes_read = buf.len();
+                let hex_dump = hex::encode(&buf);
+                error!("VLESS 解码失败: {}. Bytes: {} Hex: {}", e, bytes_read, hex_dump);
+                return Err(e);
+            }
+        };
         info!("📨 VLESS 请求: {:?} -> {}", request.command, request.address.to_string());
 
         // 发送 VLESS 响应
