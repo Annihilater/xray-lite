@@ -230,8 +230,8 @@ impl Server {
                 // 尝试预读取数据以嗅探 SNI
                 let mut buf = vec![0u8; 4096];
                 
-                // 使用 timeout 防止阻塞
-                match tokio::time::timeout(std::time::Duration::from_millis(200), stream.read(&mut buf)).await {
+                // 使用 timeout 防止阻塞 (延长到 2秒 以适应高延迟网络)
+                match tokio::time::timeout(std::time::Duration::from_millis(2000), stream.read(&mut buf)).await {
                     Ok(Ok(n)) => {
                         if n > 0 {
                             // 成功读取到了数据
