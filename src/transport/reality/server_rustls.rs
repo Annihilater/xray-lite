@@ -197,20 +197,28 @@ impl RealityServerRustls {
         let nonce = Nonce::from_slice(&info.client_random[20..32]); // Nonce = Random[20..32] (12 bytes)
 
         // AAD Strategy: Reality uses the Handshake message (excluding Record Header)
-        // Handshake Message starts after 5 bytes.
-        let aad = if full_client_hello.len() > 5 && full_client_hello[0] == 0x16 { 
-            &full_client_hello[5..] 
+        // CRITICAL: Xray-core zeroes out the SessionID field (the ciphertext) in the AAD!
+        // Offset in Handshake Message: Type(1) + Len(3) + Ver(2) + Rnd(32) + SID_Len(1) = 39
+        let mut aad_buffer = if full_client_hello.len() > 5 && full_client_hello[0] == 0x16 { 
+            full_client_hello[5..].to_vec() 
         } else { 
-            full_client_hello 
+            full_client_hello.to_vec() 
         };
+
+        if aad_buffer.len() >= 39 + 32 {
+            // Zero out the SessionID field (32 bytes)
+            for i in 0..32 {
+                aad_buffer[39 + i] = 0;
+            }
+        }
 
         let mut buffer = info.session_id.clone();
         
-        // Decrypt SessionID in-place
-        if cipher.decrypt_in_place(nonce, aad, &mut buffer).is_err() {
-            // Backup check: Try Full buffer as AAD just in case? Or Handshake Body?
-            // Actually, we'll just log the failure.
-            warn!("Reality verification failed: AEAD Decrypt error. Salt[0..20], Nonce[20..32], AES-128-GCM used.");
+        // Decrypt SessionID in-place using the zeroed-out AAD
+        if cipher.decrypt_in_place(nonce, &aad_buffer, &mut buffer).is_err() {
+            // Backup check: It's possible some clients use the original AAD? 
+            // But Xray-core strictly zeroes it out.
+            warn!("Reality verification failed: AEAD Decrypt error. Offset 39 zeroed in AAD.");
             return false;
         }
 
