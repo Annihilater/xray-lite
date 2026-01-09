@@ -239,7 +239,10 @@ impl Server {
                 // 2. 如果数据不够嗅探 (或为空)，再尝试从 stream 读取
                 // 即使有数据，如果 ClientHello 被分包了，也可能不够。TLS ClientHello 至少几十字节。
                 // 如果 initial_data 为空，肯定要读。如果不为空但很短，也可以尝试读更多(带超时)。
-                if initial_data.len() < 256 { // 256 是个经验值，ClientHello 通常大于这个
+                // UPDATE V31: 452 bytes were insufficient for full ClientHello. Increase threshold to 2048.
+                // 只要没读够完整的 ClientHello，Sniffer 就会返回 None。
+                // 实际上我们应该读到 Sniffer 满意为止。但为了简单，我们只要小于 2048 字节就尝试读更多。
+                if initial_data.len() < 2048 { 
                     let mut sniff_buf = vec![0u8; 4096];
                     
                     // 使用 timeout 防止阻塞 (3秒)
