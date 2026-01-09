@@ -23,7 +23,7 @@ use bytes::Buf;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 use hkdf::Hkdf;
 use sha2::Sha256;
-use aes_gcm::{Aes256Gcm, KeyInit, AeadInPlace, Nonce};
+use aes_gcm::{Aes128Gcm, KeyInit, AeadInPlace, Nonce};
 
 use super::hello_parser::{self, ClientHelloInfo};
 
@@ -160,7 +160,7 @@ impl RealityServerRustls {
 
     /// Verifies Reality Client Authentication
     fn verify_client_reality(&self, info: &ClientHelloInfo, full_client_hello: &[u8]) -> bool {
-        // 1. SessionID check
+        // 1. SessionID check (Ciphertext)
         if info.session_id.len() != 32 { return false; }
         
         let client_pub_key_bytes = match &info.public_key {
@@ -170,6 +170,7 @@ impl RealityServerRustls {
 
         if client_pub_key_bytes.len() != 32 { return false; }
         
+        // 2. ECDH
         let mut server_priv_bytes = [0u8; 32];
         if self.reality_config.private_key.len() != 32 { return false; }
         server_priv_bytes.copy_from_slice(&self.reality_config.private_key);
@@ -181,51 +182,42 @@ impl RealityServerRustls {
 
         let shared_secret = server_secret.diffie_hellman(&client_public);
         
+        // 3. HKDF (SHA256)
+        // Correct Reality logic: Salt is first 20 bytes of Random
         let hk = Hkdf::<Sha256>::new(
-            Some(&info.client_random), // Salt = Client Random
-            shared_secret.as_bytes()   // IKM = Shared Secret
+            Some(&info.client_random[0..20]), // Salt = Random[0..20]
+            shared_secret.as_bytes()         // IKM = Shared Secret
         );
-        let mut auth_key = [0u8; 32];
+        let mut auth_key = [0u8; 16]; // Reality uses AES-128 (16 bytes key)
         if hk.expand(b"REALITY", &mut auth_key).is_err() { return false; }
 
-        let key = aes_gcm::Key::<Aes256Gcm>::from_slice(&auth_key);
-        let cipher = Aes256Gcm::new(key);
-        let nonce = Nonce::from_slice(&info.client_random[20..32]);
+        // 4. AEAD Decrypt (AES-128-GCM)
+        let key = aes_gcm::Key::<aes_gcm::Aes128Gcm>::from_slice(&auth_key);
+        let cipher = aes_gcm::Aes128Gcm::new(key);
+        let nonce = Nonce::from_slice(&info.client_random[20..32]); // Nonce = Random[20..32] (12 bytes)
 
-        // AAD Strategy: Try both full and no-header
-        let aad_full = full_client_hello;
-        let aad_no_head = if full_client_hello.len() > 5 && full_client_hello[0] == 0x16 { 
+        // AAD Strategy: Reality uses the Handshake message (excluding Record Header)
+        // Handshake Message starts after 5 bytes.
+        let aad = if full_client_hello.len() > 5 && full_client_hello[0] == 0x16 { 
             &full_client_hello[5..] 
         } else { 
             full_client_hello 
         };
 
-        // I need 'buffer' to hold decrypted content outside the if/else to check ShortId
         let mut buffer = info.session_id.clone();
         
-        // Re-do cleanly
-        let mut success = false;
-        
-        // Try Full AAD
-        if cipher.decrypt_in_place(nonce, aad_full, &mut buffer).is_ok() {
-            success = true;
-        } else {
-             // Reset buffer
-             buffer = info.session_id.clone();
-             // Try No-Head AAD
-             if cipher.decrypt_in_place(nonce, aad_no_head, &mut buffer).is_ok() {
-                 success = true;
-                 debug!("Reality Verified using AAD without header");
-             }
-        }
-
-        if !success {
-            warn!("Reality verification failed: AEAD Decrypt error. Check Key match.");
+        // Decrypt SessionID in-place
+        if cipher.decrypt_in_place(nonce, aad, &mut buffer).is_err() {
+            // Backup check: Try Full buffer as AAD just in case? Or Handshake Body?
+            // Actually, we'll just log the failure.
+            warn!("Reality verification failed: AEAD Decrypt error. Salt[0..20], Nonce[20..32], AES-128-GCM used.");
             return false;
         }
-        
+
+        // 5. Verify ShortId
+        // Decrypted buffer: [Timestamp(4) | ShortId(8) | PayloadTag]
         if buffer.len() < 12 { 
-            warn!("Reality verification failed: Decrypted payload too short");
+            warn!("Reality verification failed: Decrypted payload too short ({})", buffer.len());
             return false; 
         }
         let short_id_bytes = &buffer[4..12]; 
@@ -239,7 +231,10 @@ impl RealityServerRustls {
         }
         
         if !found {
-            warn!("Reality verification failed: ShortId mismatch. Got: {}", hex::encode(short_id_bytes));
+            warn!("Reality verification failed: ShortId mismatch. Got: {}, Expected one of: {:?}", 
+                hex::encode(short_id_bytes),
+                self.reality_config.short_ids.iter().map(hex::encode).collect::<Vec<_>>()
+            );
         }
 
         found
