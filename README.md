@@ -38,15 +38,19 @@ A high-performance VLESS+Reality+XHTTP proxy server implemented in Rust, fully c
 Run the following command on your server (requires root):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/undead-undead/xray-lite/main/install.sh | bash
+# Using curl
+bash <(curl -fsSL https://raw.githubusercontent.com/undead-undead/xray-lite/main/install.sh)
+
+# Or using wget
+bash <(wget -qO- https://raw.githubusercontent.com/undead-undead/xray-lite/main/install.sh)
 ```
 
-The script will automatically:
-1. ⬇️ Download the latest binary from GitHub Release
-2. 🔑 Generate keys and UUID
-3. ⚙️ Configure systemd service
-4. 🔥 Start the server
-5. 📱 Show client configuration
+The script performs the following actions:
+1. ⬇️ **Download** the latest binary (auto-fallback to raw artifact if release download fails).
+2. 🔑 **Generate** X25519 keys, UUID, and random ShortID.
+3. ⚙️ **Configure** systemd service and firewall.
+4. 🔥 **Start** the server immediately.
+5. 📱 **Display** connection details.
 
 ### Method 2: Build from Source
 
