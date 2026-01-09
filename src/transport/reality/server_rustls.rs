@@ -148,6 +148,7 @@ impl RealityServerRustls {
         use rcgen::{CertificateParams, KeyPair, PKCS_ED25519};
 
         let key_pair = KeyPair::generate(&PKCS_ED25519).map_err(|e| anyhow!("Key generation fail: {}", e))?;
+        let pub_key_raw = key_pair.public_key_raw().to_vec();
         let mut params = CertificateParams::new(vec![host.to_string()]);
         params.alg = &PKCS_ED25519;
         params.key_pair = Some(key_pair);
@@ -156,16 +157,9 @@ impl RealityServerRustls {
         let mut cert_der = cert.serialize_der().map_err(|e| anyhow!("Cert serialization fail: {}", e))?;
         let priv_key_der = cert.serialize_private_key_der();
         
-        // Search for Ed25519 public key in SPKI (0x03 0x21 0x00 is the BIT STRING header for 32 bytes)
-        let pub_key_raw = if let Some(pos) = cert_der.windows(3).position(|w| w == &[0x03, 0x21, 0x00]) {
-            &cert_der[pos+3..pos+35]
-        } else {
-            bail!("Could not find public key in cert DER");
-        };
-
         // Reality Signature: HMAC-SHA512(AuthKey, RawPublicKey)
         let ring_key = hmac::Key::new(hmac::HMAC_SHA512, auth_key);
-        let signature = hmac::sign(&ring_key, pub_key_raw);
+        let signature = hmac::sign(&ring_key, &pub_key_raw);
         let sig_bytes = signature.as_ref(); 
 
         // Overwrite the signature at the end of DER (BIT STRING 03 41 00 followed by 64 bytes)
