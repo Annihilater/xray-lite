@@ -21,6 +21,12 @@ impl Address {
         }
 
         let addr_type = buf.get_u8();
+        eprintln!(
+            "🔍 Address decode: addr_type byte = 0x{:02x} ({}), remaining = {}",
+            addr_type,
+            addr_type,
+            buf.remaining()
+        );
 
         match addr_type {
             // IPv4
