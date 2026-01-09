@@ -182,17 +182,35 @@ impl RealityServerRustls {
         // We should skip 5 bytes for AAD if Xray expects Handshake Protocol message only.
         
         // Xray: "AdditionalData: clientHello.Raw"
-        // In Golang `tls.ClientHelloInfo`, `Raw` usually implies Handshake message.
-        // Let's try skipping header if present.
+        // AAD Strategy: Try both with and without Record Header to maximize compatibility
+        // Standard Xray usually includes the Record Header in AAD.
         
-        let aad = if full_client_hello.len() > 5 && full_client_hello[0] == 0x16 {
-            &full_client_hello[5..]
-        } else {
-            full_client_hello
+        let aad_full = full_client_hello;
+        let aad_no_head = if full_client_hello.len() > 5 && full_client_hello[0] == 0x16 { 
+            &full_client_hello[5..] 
+        } else { 
+            full_client_hello 
         };
 
-        if cipher.decrypt_in_place(nonce, aad, &mut buffer).is_err() {
-            warn!("Reality verification failed: AEAD Decrypt error. Check Public/Private Key match.");
+        let mut decrypted_success = false;
+
+        // Attempt 1: Full AAD
+        let mut buffer_test = info.session_id.clone();
+        if cipher.decrypt_in_place(nonce, aad_full, &mut buffer_test).is_ok() {
+            buffer = buffer_test;
+            decrypted_success = true;
+        } else {
+            // Attempt 2: No-Header AAD
+            let mut buffer_test = info.session_id.clone();
+            if cipher.decrypt_in_place(nonce, aad_no_head, &mut buffer_test).is_ok() {
+                buffer = buffer_test;
+                decrypted_success = true;
+                debug!("Reality Verified using AAD without header");
+            }
+        }
+
+        if !decrypted_success {
+            warn!("Reality verification failed: AEAD Decrypt error (tried both AADs). Check Public/Private Key match.");
             return false;
         }
         
