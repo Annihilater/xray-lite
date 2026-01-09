@@ -75,18 +75,17 @@ impl RealityHandshake {
             &super::crypto::hash_transcript(&transcript0)
         )?;
         
-        // 7. 发送加密握手消息（简化版：EE + Cert(empty) + Fin）
+        // 7. 发送加密握手消息（PSK 风格：只有 EE + Fin，无证书）
         let ee_msg = vec![8, 0, 0, 2, 0, 0];
         debug!("EncryptedExtensions plaintext: {}", hex::encode(&ee_msg));
         
-        let cert_msg = vec![11, 0, 0, 4, 0, 0, 0, 0];
-        debug!("Certificate plaintext: {}", hex::encode(&cert_msg));
+        // 不发送 Certificate 消息（PSK 模式）
         
         let transcript1 = vec![
             client_hello_raw.as_slice(),
             server_hello.handshake_payload(),
-            &ee_msg,
-            &cert_msg
+            &ee_msg
+            // 注意：没有 cert_msg
         ];
         let hash1 = super::crypto::hash_transcript(&transcript1);
         debug!("Transcript hash (for Finished): {}", hex::encode(&hash1));
@@ -101,10 +100,9 @@ impl RealityHandshake {
         fin_msg.put_slice(&verify_data);
         debug!("Finished plaintext: {}", hex::encode(&fin_msg));
         
-        // 发送加密消息 - 打包成一个 TLS Record
+        // 打包 EE + Fin 到一个 TLS Record
         let mut bundle = BytesMut::new();
         bundle.put_slice(&ee_msg);
-        bundle.put_slice(&cert_msg);
         bundle.put_slice(&fin_msg);
         
         debug!("Bundled handshake messages (plaintext): {}", hex::encode(&bundle));
@@ -162,7 +160,6 @@ impl RealityHandshake {
             client_hello_raw.as_slice(),
             server_hello.handshake_payload(),
             &ee_msg,
-            &cert_msg,
             &fin_msg
         ];
         let app_keys = TlsKeys::derive_application_keys(&handshake_secret, &super::crypto::hash_transcript(&transcript_app))?;
