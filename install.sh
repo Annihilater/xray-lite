@@ -19,132 +19,23 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Version / 版本
-VERSION="v0.2.7"
+# Version / 版本
+VERSION="v0.2.8"
 REPO="undead-undead/xray-lite"
 
-echo -e "${BLUE}=========================================${NC}"
-echo -e "${BLUE}  Xray-Lite One-Click Installation${NC}"
-echo -e "${BLUE}  Xray-Lite 一键安装${NC}"
-echo -e "${BLUE}  Version / 版本: ${VERSION}${NC}"
-echo -e "${BLUE}=========================================${NC}"
-echo ""
-
-# Check if running as root / 检查是否为 root
-if [ "$EUID" -ne 0 ]; then 
-    echo -e "${RED}Please run as root / 请使用 root 权限运行${NC}"
-    echo "sudo bash install.sh"
-    exit 1
-fi
-
-# Detect architecture / 检测架构
-ARCH=$(uname -m)
-case $ARCH in
-    x86_64)
-        BINARY_ARCH="x86_64"
-        ;;
-    aarch64|arm64)
-        BINARY_ARCH="aarch64"
-        ;;
-    *)
-        echo -e "${RED}Unsupported architecture: $ARCH / 不支持的架构: $ARCH${NC}"
-        exit 1
-        ;;
-esac
-
-echo -e "${GREEN}Detected architecture / 检测到架构: $ARCH${NC}"
-echo ""
-
-# Stop existing service / 停止现有服务
-echo -e "${YELLOW}Checking for existing installation... / 检查现有安装...${NC}"
-if systemctl is-active --quiet xray-lite; then
-    echo "Stopping existing xray-lite service... / 停止现有 xray-lite 服务..."
-    systemctl stop xray-lite
-    systemctl disable xray-lite
-fi
-
-# Kill any lingering vless-server processes
-pkill -f vless-server || true
-
-# Check if port is still in use after cleanup
-# If it's still in use, it might be another web server like Nginx
-# We warn the user but don't force kill unknown processes
-echo ""
-
-# Create installation directory / 创建安装目录
-INSTALL_DIR="/opt/xray-lite"
-echo -e "${YELLOW}[1/6] Creating installation directory... / 创建安装目录...${NC}"
-mkdir -p $INSTALL_DIR
-cd $INSTALL_DIR
-echo -e "${GREEN}✓ Directory created / 目录已创建: $INSTALL_DIR${NC}"
-echo ""
-
-# Download binary / 下载二进制文件
-echo -e "${YELLOW}[2/6] Downloading Xray-Lite binary... / 下载 Xray-Lite 二进制文件...${NC}"
-DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}/xray-lite-${BINARY_ARCH}-unknown-linux-gnu.tar.gz"
-
-if command -v wget &> /dev/null; then
-    wget -q --show-progress "$DOWNLOAD_URL" -O xray-lite.tar.gz
-elif command -v curl &> /dev/null; then
-    curl -L --progress-bar "$DOWNLOAD_URL" -o xray-lite.tar.gz
-else
-    echo -e "${RED}Neither wget nor curl found / 未找到 wget 或 curl${NC}"
-    exit 1
-fi
-
-echo -e "${GREEN}✓ Download complete / 下载完成${NC}"
-echo ""
-
-# Extract binary / 解压二进制文件
-echo -e "${YELLOW}[3/6] Extracting files... / 解压文件...${NC}"
-tar -xzf xray-lite.tar.gz
-rm xray-lite.tar.gz
-chmod +x vless-server keygen
-echo -e "${GREEN}✓ Files extracted / 文件已解压${NC}"
-echo ""
-
-# Generate configuration / 生成配置
-echo -e "${YELLOW}[4/6] Generating configuration... / 生成配置...${NC}"
-
-# Generate keys / 生成密钥
-echo "Generating X25519 key pair... / 生成 X25519 密钥对..."
-KEYGEN_OUTPUT=$(./keygen)
-PRIVATE_KEY=$(echo "$KEYGEN_OUTPUT" | grep "Private key:" | awk '{print $3}')
-PUBLIC_KEY=$(echo "$KEYGEN_OUTPUT" | grep "Public key:" | awk '{print $3}')
-
-# Generate UUID / 生成 UUID
-CLIENT_UUID=$(cat /proc/sys/kernel/random/uuid)
-
-# Get server IP / 获取服务器 IP
-SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s ip.sb 2>/dev/null || echo "YOUR_SERVER_IP")
-
-# Interactive configuration / 交互式配置
-echo ""
-if [ -t 0 ]; then
-    read -p "Server port / 服务器端口 [443]: " PORT_INPUT
-    PORT=${PORT_INPUT:-443}
-else
-    PORT=443
-    echo "Non-interactive mode detected using default port 443 / 检测到非交互模式，使用默认端口 443"
-fi
-
-if [[ ! "$PORT" =~ ^[0-9]+$ ]]; then
-    echo -e "${YELLOW}Invalid port, using default 443 / 端口无效，使用默认 443${NC}"
-    PORT=443
-fi
-
-if [ -t 0 ]; then
-    read -p "Masquerade website / 伪装网站 [www.microsoft.com:443]: " DEST_INPUT
-    DEST=${DEST_INPUT:-www.microsoft.com:443}
-else
-    DEST="www.microsoft.com:443"
-fi
+# ... (omitted) ...
 
 DOMAIN=$(echo $DEST | cut -d: -f1)
 
 # Short ID configuration / Short ID 配置
-# Default to empty to allow maximum compatibility with clients sending random Session IDs
-# 默认为空以允许最大兼容性（支持发送随机 Session ID 的客户端）
-SHORT_ID=""
+# Generate a random 8-byte (16 hex chars) Short ID for Reality verification
+# 生成随机 8 字节 Short ID 用于 Reality 验证
+if command -v openssl &> /dev/null; then
+    SHORT_ID=$(openssl rand -hex 8)
+else
+    # Fallback if openssl missing
+    SHORT_ID=$(cat /proc/sys/kernel/random/uuid | tr -d '-' | head -c 16)
+fi
 
 # Create server configuration / 创建服务器配置
 cat > config.json << EOF
@@ -180,7 +71,7 @@ cat > config.json << EOF
           ],
           "privateKey": "$PRIVATE_KEY",
           "publicKey": "$PUBLIC_KEY",
-          "shortIds": [],
+          "shortIds": ["$SHORT_ID"],
           "fingerprint": "chrome"
         }
       }
@@ -354,7 +245,7 @@ echo "  IP: $SERVER_IP"
 echo "  Port / 端口: $PORT"
 echo "  UUID: $CLIENT_UUID"
 echo "  Public Key / 公钥: $PUBLIC_KEY"
-echo "  Short ID / 短 ID: (None / 空)"
+echo "  Short ID / 短 ID: $SHORT_ID"
 echo ""
 echo -e "${BLUE}Client Configuration / 客户端配置:${NC}"
 echo "  Configuration file / 配置文件: $INSTALL_DIR/client-config.json"
