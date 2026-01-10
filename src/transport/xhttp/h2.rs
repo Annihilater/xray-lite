@@ -3,7 +3,7 @@ use bytes::Bytes;
 use h2::server::{self, SendResponse};
 use hyper::http::{Request, Response, StatusCode};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tracing::{debug, info, warn};
+use tracing::{debug, info, warn, error};
 
 use super::XhttpConfig;
 
