@@ -84,6 +84,14 @@ impl H2Handler {
 
         // 根据模式处理
         match config.mode.as_str() {
+            "auto" => {
+                // 自动选择：根据请求方法判断
+                if method == "POST" {
+                    Self::handle_stream_up(request, respond).await?;
+                } else {
+                    Self::handle_stream_down(request, respond).await?;
+                }
+            }
             "stream-up" => {
                 Self::handle_stream_up(request, respond).await?;
             }

@@ -20,7 +20,7 @@ A lightweight, high-performance VLESS + Reality proxy server implemented in pure
 | **VLESS UDP** | ✅ Stable | UDP over TCP support / UDP over TCP 支持 |
 | **Reality** | ✅ Stable | TLS 1.3 with dynamic certificate / TLS 1.3 动态证书 |
 | **SNI Sniffing** | ✅ Stable | Auto-detect target domain / 自动嗅探目标域名 |
-| **XHTTP** | 🚧 Coming Soon | HTTP/2 + gRPC transport / HTTP/2 + gRPC 传输层 |
+| **XHTTP** | ✅ Stable | HTTP/2 transport with auto mode / HTTP/2 传输层 (支持 auto 模式) |
 
 ### Why Xray-Lite? / 为什么选择 Xray-Lite？
 

@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum XhttpMode {
+    /// 自动选择模式
+    Auto,
     /// 流式上传
     StreamUp,
     /// 流式下载
@@ -23,6 +25,7 @@ pub enum XhttpMode {
 impl XhttpMode {
     pub fn as_str(&self) -> &'static str {
         match self {
+            XhttpMode::Auto => "auto",
             XhttpMode::StreamUp => "stream-up",
             XhttpMode::StreamDown => "stream-down",
             XhttpMode::StreamOne => "stream-one",

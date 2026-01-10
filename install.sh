@@ -19,7 +19,7 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Version / 版本
-VERSION="v0.2.38-optimize"
+VERSION="v0.2.39-xhttp"
 REPO="undead-undead/xray-lite"
 
 echo -e "${BLUE}=========================================${NC}"
@@ -192,7 +192,59 @@ else
     SHORT_ID=$(cat /proc/sys/kernel/random/uuid | tr -d '-' | head -c 16)
 fi
 
-# Create server configuration
+# XHTTP configuration / XHTTP 配置
+ENABLE_XHTTP="n"
+NETWORK_TYPE="tcp"
+XHTTP_MODE="auto"
+XHTTP_PATH="/"
+
+if [ -t 0 ]; then
+    echo ""
+    echo -e "${YELLOW}XHTTP provides additional obfuscation via HTTP/2${NC}"
+    echo -e "${YELLOW}XHTTP 通过 HTTP/2 提供额外的混淆${NC}"
+    read -p "Enable XHTTP? / 启用 XHTTP? (y/N): " XHTTP_INPUT
+    ENABLE_XHTTP=$(echo "${XHTTP_INPUT:-n}" | tr '[:upper:]' '[:lower:]')
+    
+    if [ "$ENABLE_XHTTP" = "y" ]; then
+        NETWORK_TYPE="http"
+        echo ""
+        echo "XHTTP modes / XHTTP 模式:"
+        echo "  1. auto (recommended / 推荐)"
+        echo "  2. stream-up"
+        echo "  3. stream-down"  
+        echo "  4. stream-one"
+        read -p "Select mode / 选择模式 [1]: " MODE_INPUT
+        case "${MODE_INPUT:-1}" in
+            2) XHTTP_MODE="stream-up" ;;
+            3) XHTTP_MODE="stream-down" ;;
+            4) XHTTP_MODE="stream-one" ;;
+            *) XHTTP_MODE="auto" ;;
+        esac
+        
+        read -p "XHTTP path / XHTTP 路径 [/]: " PATH_INPUT
+        XHTTP_PATH=${PATH_INPUT:-/}
+        
+        echo -e "${GREEN}✓ XHTTP enabled / XHTTP 已启用${NC}"
+        echo "  Mode / 模式: $XHTTP_MODE"
+        echo "  Path / 路径: $XHTTP_PATH"
+    else
+        echo -e "${GREEN}✓ Using TCP (default) / 使用 TCP (默认)${NC}"
+    fi
+fi
+
+# Create server configuration with conditional XHTTP
+# Build XHTTP settings if enabled
+if [ "$ENABLE_XHTTP" = "y" ]; then
+    XHTTP_SETTINGS=",
+        \"xhttpSettings\": {
+          \"mode\": \"$XHTTP_MODE\",
+          \"path\": \"$XHTTP_PATH\",
+          \"host\": \"$DOMAIN\"
+        }"
+else
+    XHTTP_SETTINGS=""
+fi
+
 cat > config.json << EOF
 {
   "log": {
@@ -214,7 +266,7 @@ cat > config.json << EOF
         "decryption": "none"
       },
       "streamSettings": {
-        "network": "tcp",
+        "network": "$NETWORK_TYPE",
         "security": "reality",
         "realitySettings": {
           "show": false,
@@ -228,7 +280,7 @@ cat > config.json << EOF
           "publicKey": "$PUBLIC_KEY",
           "shortIds": ["$SHORT_ID"],
           "fingerprint": "chrome"
-        }
+        }$XHTTP_SETTINGS
       }
     }
   ],

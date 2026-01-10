@@ -139,6 +139,9 @@ impl Server {
         let _xhttp_server = if let Some(xhttp_settings) = &inbound.stream_settings.xhttp_settings {
             let xhttp_config = crate::transport::xhttp::XhttpConfig {
                 mode: match xhttp_settings.mode {
+                    crate::config::XhttpMode::Auto => {
+                        crate::transport::xhttp::XhttpMode::Auto
+                    }
                     crate::config::XhttpMode::StreamUp => {
                         crate::transport::xhttp::XhttpMode::StreamUp
                     }

@@ -165,7 +165,7 @@ pub struct XhttpSettings {
 }
 
 fn default_xhttp_mode() -> XhttpMode {
-    XhttpMode::StreamUp
+    XhttpMode::Auto // 默认自动选择
 }
 
 fn default_path() -> String {
@@ -175,6 +175,8 @@ fn default_path() -> String {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum XhttpMode {
+    /// 自动选择模式
+    Auto,
     StreamUp,
     StreamDown,
     StreamOne,
