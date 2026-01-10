@@ -154,17 +154,37 @@ impl H2Handler {
             while let Some(chunk_res) = body.data().await {
                 let chunk = chunk_res?;
                 let _ = body.flow_control().release_capacity(chunk.len());
+                
+                info!("XHTTP 收到数据块: {} 字节", chunk.len());
+                if chunk.len() > 0 {
+                    let dump_len = std::cmp::min(chunk.len(), 16);
+                    info!("Hex Dump: {}", hex::encode(&chunk[..dump_len]));
+                }
+
                 buf.extend_from_slice(&chunk);
                 
+                // 暂时尝试作为 Raw 数据直接写入管道，看看能否通
+                // 如果是 gRPC，VLESS 会解析失败，但至少不会超时
+                // client_write.write_all(&chunk).await?; 
+                
+                // 现有的 gRPC 逻辑:
                 while buf.len() >= 5 {
+                    let compressed_flag = buf[0];
                     let len = u32::from_be_bytes([buf[1], buf[2], buf[3], buf[4]]) as usize;
-                    if buf.len() < 5 + len { break; }
+                    
+                    info!("尝试解析 gRPC: flag={} len={} (buf_len={})", compressed_flag, len, buf.len());
+
+                    if buf.len() < 5 + len { 
+                        debug!("数据包不完整，等待更多数据...");
+                        break; 
+                    }
                     
                     let frame_len = 5 + len;
                     let data = buf[5..frame_len].to_vec();
                     let _ = buf.split_to(frame_len); // Advance
                     
                     if !data.is_empty() {
+                         debug!("提取有效载荷: {} 字节", data.len());
                         client_write.write_all(&data).await?;
                     }
                 }
