@@ -140,8 +140,10 @@ impl H2Handler {
 
         let response = Response::builder()
             .status(StatusCode::OK)
-            .header("content-type", "application/grpc")
-            .header("grpc-encoding", "identity")
+            .header("content-type", "text/event-stream")
+            .header("cache-control", "no-store")
+            .header("x-accel-buffering", "no")
+            .header("access-control-allow-origin", "*")
             .header("x-padding", padding)
             .body(())
             .map_err(|e| anyhow!("构建响应失败: {}", e))?;
