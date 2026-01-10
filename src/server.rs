@@ -157,8 +157,23 @@ impl Server {
             None
         };
 
+        // 连接数限制 (防止 OOM)
+        const MAX_CONNECTIONS: usize = 4096;
+        let connection_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
+        
+        info!("🔒 最大并发连接数: {}", MAX_CONNECTIONS);
+
         // 接受连接循环
         loop {
+            // 获取连接许可
+            let permit = match connection_semaphore.clone().acquire_owned().await {
+                Ok(p) => p,
+                Err(_) => {
+                    error!("连接限制信号量已关闭");
+                    return Ok(());
+                }
+            };
+            
             match listener.accept().await {
                 Ok((stream, addr)) => {
                     // 获取 sockopt 配置
@@ -181,12 +196,16 @@ impl Server {
                     let accept_proxy_protocol = inbound.stream_settings.sockopt.accept_proxy_protocol;
 
                     tokio::spawn(async move {
+                        // 持有 permit 直到连接结束，自动释放
+                        let _permit = permit;
+                        
                         if let Err(e) =
                             Self::handle_client(stream, codec, reality_server, connection_manager, sniffing_enabled, tcp_no_delay, accept_proxy_protocol)
                                 .await
                         {
                             error!("客户端处理失败: {}", e);
                         }
+                        // permit 在这里自动 drop，释放连接槽
                     });
                 }
                 Err(e) => {
@@ -482,7 +501,7 @@ impl Server {
                 
                 // 客户端 -> UDP 目标
                 let send_task = async {
-                    let mut read_buf = vec![0u8; 65536];
+                    let mut read_buf = vec![0u8; 8192];  // 8KB - 足够大多数 UDP 包
                     let mut last_activity = tokio::time::Instant::now();
                     
                     loop {
@@ -534,7 +553,7 @@ impl Server {
                 
                 // UDP 目标 -> 客户端 (Full Cone: 接收任意地址的响应)
                 let recv_task = async {
-                    let mut recv_buf = vec![0u8; 65536];
+                    let mut recv_buf = vec![0u8; 8192];  // 8KB - 足够大多数 UDP 包
                     let mut last_activity = tokio::time::Instant::now();
                     
                     loop {

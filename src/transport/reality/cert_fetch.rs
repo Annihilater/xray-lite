@@ -21,7 +21,7 @@ pub async fn fetch_certificate(dest: &str) -> Result<Vec<u8>> {
     stream.write_all(&client_hello).await?;
     
     // 读取响应并提取证书
-    let mut buf = BytesMut::with_capacity(16384);
+    let mut buf = BytesMut::with_capacity(8192);
     
     loop {
         let n = stream.read_buf(&mut buf).await?;
