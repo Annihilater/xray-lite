@@ -71,13 +71,17 @@ impl H2Handler {
             return Ok(());
         }
 
-        // 验证 Host 头
-        if let Some(host) = request.headers().get("host") {
-            if let Ok(host_str) = host.to_str() {
-                if host_str != config.host {
-                    warn!("Host 不匹配: {} != {}", host_str, config.host);
-                    Self::send_error_response(&mut respond, StatusCode::BAD_REQUEST).await?;
-                    return Ok(());
+        // 验证 Host 头 (如果配置了 Host)
+        if !config.host.is_empty() {
+            if let Some(host) = request.headers().get("host") {
+                if let Ok(host_str) = host.to_str() {
+                    // 简单的 Host 匹配 (不包含端口)
+                    let host_only = host_str.split(':').next().unwrap_or(host_str);
+                    if host_only != config.host && host_str != config.host {
+                        warn!("Host 不匹配: {} != {}", host_str, config.host);
+                        Self::send_error_response(&mut respond, StatusCode::BAD_REQUEST).await?;
+                        return Ok(());
+                    }
                 }
             }
         }

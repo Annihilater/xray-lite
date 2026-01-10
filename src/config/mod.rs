@@ -161,6 +161,7 @@ pub struct XhttpSettings {
     pub mode: XhttpMode,
     #[serde(default = "default_path")]
     pub path: String,
+    #[serde(default = "default_host")]
     pub host: String,
 }
 
@@ -170,6 +171,10 @@ fn default_xhttp_mode() -> XhttpMode {
 
 fn default_path() -> String {
     "/".to_string()
+}
+
+fn default_host() -> String {
+    "".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

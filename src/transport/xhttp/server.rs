@@ -19,9 +19,9 @@ impl XhttpServer {
             return Err(anyhow!("XHTTP path 不能为空"));
         }
 
-        if config.host.is_empty() {
-            return Err(anyhow!("XHTTP host 不能为空"));
-        }
+        // if config.host.is_empty() {
+        //     return Err(anyhow!("XHTTP host 不能为空"));
+        // }
 
         info!("XHTTP 服务器初始化成功");
         debug!("模式: {:?}", config.mode);
