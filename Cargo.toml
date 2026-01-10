@@ -82,4 +82,4 @@ path = "src/bin/genconfig.rs"
 
 
 [patch.crates-io]
-rustls = { path = "../rustls-reality/rustls" }
+rustls = { path = "./rustls-reality/rustls" }
