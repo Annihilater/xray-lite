@@ -133,11 +133,16 @@ impl H2Handler {
         Fut: std::future::Future<Output = Result<()>> + Send + 'static,
     {
         debug!("处理 stream-up 模式");
+        
+        // Pseudo-random padding
+        let padding_len = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().subsec_nanos() % 500 + 100) as usize;
+        let padding = "0".repeat(padding_len);
 
         let response = Response::builder()
             .status(StatusCode::OK)
             .header("content-type", "application/grpc")
             .header("grpc-encoding", "identity")
+            .header("x-padding", padding)
             .body(())
             .map_err(|e| anyhow!("构建响应失败: {}", e))?;
 

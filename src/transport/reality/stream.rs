@@ -27,8 +27,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> TlsStream<S> {
         Self {
             stream,
             keys,
-            input_buffer: BytesMut::with_capacity(8192),
-            decrypted_buffer: BytesMut::with_capacity(8192),
+            input_buffer: BytesMut::with_capacity(24 * 1024),
+            decrypted_buffer: BytesMut::with_capacity(24 * 1024),
             read_seq: 0,
             write_seq: 0,
         }
@@ -39,7 +39,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> TlsStream<S> {
             stream,
             keys,
             input_buffer: initial_data, // Use provided buffer
-            decrypted_buffer: BytesMut::with_capacity(8192),
+            decrypted_buffer: BytesMut::with_capacity(24 * 1024),
             read_seq: 0,
             write_seq: 0,
         }
