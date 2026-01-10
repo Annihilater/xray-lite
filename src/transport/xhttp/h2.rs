@@ -205,8 +205,11 @@ impl H2Handler {
                 let n = client_read.read(&mut buf).await?;
                 if n == 0 { break; }
                 
-                let msg = super::grpc::GrpcMessage::new(buf[..n].to_vec());
-                send_stream.send_data(msg.encode(), false)?;
+                // let msg = super::grpc::GrpcMessage::new(buf[..n].to_vec());
+                // send_stream.send_data(msg.encode(), false)?;
+                
+                // Switch to Raw Pipe for downstream too
+                send_stream.send_data(Bytes::copy_from_slice(&buf[..n]), false)?;
             }
             // 发送 Trailer
             // 简单的 GRPC-Status: 0 trailer 在 send_response 时很难发送，h2 trait 需要 send_trailers
