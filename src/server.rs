@@ -290,7 +290,13 @@ impl Server {
                         target_address = format!("{}:{}", sni, port);
                     } else {
                         // 只有在数据足够长时才认为是 "No SNI found"，否则可能是太短
-                        debug!("No SNI found in initial data ({} bytes)", initial_data.len());
+                        let len = initial_data.len();
+                        debug!("No SNI found in initial data ({} bytes)", len);
+                        if len > 0 {
+                            // 打印前 32 字节 Hex 以供调试，看看这到底是啥
+                            let dump_len = std::cmp::min(len, 64);
+                            error!("📦 Hex Dump (First {} bytes): {:02X?}", dump_len, &initial_data[..dump_len]);
+                        }
                     }
                 }
                 // --- 🌟 SNIFFING END ---

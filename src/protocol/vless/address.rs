@@ -15,21 +15,25 @@ pub enum Address {
 
 impl Address {
     /// 从字节流解析地址
+    /// 注意：VLESS 协议使用 PortThenAddress 格式，即先读 Port 再读地址！
     pub fn decode(buf: &mut BytesMut) -> Result<Self> {
-        if buf.remaining() < 1 {
-            return Err(anyhow!("缓冲区太小，无法读取地址类型"));
+        // 1. 先读取 Port (2 bytes, big endian) - 这是 VLESS 协议规范！
+        if buf.remaining() < 3 {
+            return Err(anyhow!("缓冲区太小，无法读取端口和地址类型"));
         }
+        let port = buf.get_u16();
 
+        // 2. 再读取地址类型
         let addr_type = buf.get_u8();
+
         match addr_type {
             // IPv4
             0x01 => {
-                if buf.remaining() < 6 {
+                if buf.remaining() < 4 {
                     return Err(anyhow!("缓冲区太小，无法读取 IPv4 地址"));
                 }
                 let mut octets = [0u8; 4];
                 buf.copy_to_slice(&mut octets);
-                let port = buf.get_u16();
                 Ok(Address::Ipv4(Ipv4Addr::from(octets), port))
             }
             // 域名
@@ -38,34 +42,32 @@ impl Address {
                     return Err(anyhow!("缓冲区太小，无法读取域名长度"));
                 }
                 let len = buf.get_u8() as usize;
-                if buf.remaining() < len + 2 {
+                if buf.remaining() < len {
                     return Err(anyhow!("缓冲区太小，无法读取域名"));
                 }
                 let domain_bytes = buf.copy_to_bytes(len);
                 let domain = String::from_utf8(domain_bytes.to_vec())?;
-                let port = buf.get_u16();
                 Ok(Address::Domain(domain, port))
             }
             // IPv6
             0x03 => {
-                if buf.remaining() < 18 {
+                if buf.remaining() < 16 {
                     return Err(anyhow!("缓冲区太小，无法读取 IPv6 地址"));
                 }
                 let mut octets = [0u8; 16];
                 buf.copy_to_slice(&mut octets);
-                let port = buf.get_u16();
                 Ok(Address::Ipv6(Ipv6Addr::from(octets), port))
             }
             // Mux 标记 - v2ray/小火箭的多路复用
             0x00 => {
-                // Mux 格式: 0x00 + SessionID(1字节) + 真实地址
+                // Mux 格式: Port(已读) + 0x00 + SessionID(1字节) + 真实地址
                 if buf.remaining() < 1 {
                     return Err(anyhow!("缓冲区太小，无法读取 Mux Session ID"));
                 }
 
                 let _session_id = buf.get_u8(); // 必须读取并跳过
 
-                // 递归解析真实地址
+                // 递归解析真实地址 (会再读一次 Port + Address)
                 let real_address = Self::decode(buf)?;
                 Ok(real_address)
             }
@@ -74,23 +76,24 @@ impl Address {
     }
 
     /// 将地址编码为字节流
+    /// 注意：VLESS 协议使用 PortThenAddress 格式
     pub fn encode(&self, buf: &mut BytesMut) {
         match self {
             Address::Ipv4(ip, port) => {
-                buf.put_u8(0x01);
+                buf.put_u16(*port); // 先写 Port
+                buf.put_u8(0x01); // 再写 Address Type
                 buf.put_slice(&ip.octets());
-                buf.put_u16(*port);
             }
             Address::Domain(domain, port) => {
-                buf.put_u8(0x02);
+                buf.put_u16(*port); // 先写 Port
+                buf.put_u8(0x02); // 再写 Address Type
                 buf.put_u8(domain.len() as u8);
                 buf.put_slice(domain.as_bytes());
-                buf.put_u16(*port);
             }
             Address::Ipv6(ip, port) => {
-                buf.put_u8(0x03);
+                buf.put_u16(*port); // 先写 Port
+                buf.put_u8(0x03); // 再写 Address Type
                 buf.put_slice(&ip.octets());
-                buf.put_u16(*port);
             }
         }
     }
