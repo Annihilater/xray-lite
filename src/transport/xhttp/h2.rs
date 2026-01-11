@@ -54,7 +54,7 @@ impl H2Handler {
 
         let mut builder = server::Builder::new();
         builder
-            .initial_window_size(4 * 1024 * 1024)
+            .initial_window_size(524288) // 512KB (Xray default)
             .max_concurrent_streams(500)
             .max_frame_size(16384);
 
@@ -183,19 +183,27 @@ impl H2Handler {
 
         // DOWN
         let down_task = async move {
-            let mut buf = vec![0u8; 16384];
+            let mut buf = BytesMut::with_capacity(65536);
             use tokio::io::AsyncReadExt;
             loop {
-                let n = client_read.read(&mut buf).await?;
+                if buf.capacity() < 2048 {
+                    buf.reserve(65536);
+                }
+                let n = client_read.read_buf(&mut buf).await?;
                 if n == 0 { break; }
+                
                 if is_grpc {
                     let mut frame = BytesMut::with_capacity(5 + n);
                     frame.extend_from_slice(&[0u8]);
                     frame.extend_from_slice(&(n as u32).to_be_bytes());
+                    // copy needed here as we are framing
                     frame.extend_from_slice(&buf[..n]);
+                    buf.advance(n);
                     send_stream.send_data(frame.freeze(), false)?;
                 } else {
-                    send_stream.send_data(Bytes::copy_from_slice(&buf[..n]), false)?;
+                    // Zero-copy split
+                    let chunk = buf.split_to(n).freeze();
+                    send_stream.send_data(chunk, false)?;
                 }
             }
             if is_grpc {
@@ -242,12 +250,16 @@ impl H2Handler {
         let mut send_stream = respond.send_response(response, false)?;
 
         let downstream = async move {
-            let mut buf = vec![0u8; 16384];
+            let mut buf = BytesMut::with_capacity(65536);
             use tokio::io::AsyncReadExt;
             loop {
-                let n = client_read.read(&mut buf).await?;
+                if buf.capacity() < 2048 {
+                    buf.reserve(65536);
+                }
+                let n = client_read.read_buf(&mut buf).await?;
                 if n == 0 { break; }
-                send_stream.send_data(Bytes::copy_from_slice(&buf[..n]), false)?;
+                let chunk = buf.split_to(n).freeze();
+                send_stream.send_data(chunk, false)?;
             }
             send_stream.send_data(Bytes::new(), true)?;
             Ok::<(), anyhow::Error>(())
