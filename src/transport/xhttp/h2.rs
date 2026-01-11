@@ -25,7 +25,7 @@ impl H2Handler {
         F: Fn(Box<dyn crate::server::AsyncStream>) -> Fut + Clone + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<()>> + Send + 'static,
     {
-        debug!("XHTTP: 启动 H2 握手");
+        debug!("XHTTP: 执行 H2 握手...");
 
         let mut builder = server::Builder::new();
         builder
@@ -42,12 +42,12 @@ impl H2Handler {
                     let handler = handler.clone();
                     tokio::spawn(async move {
                         if let Err(e) = Self::handle_request(config, request, respond, handler).await {
-                            warn!("XHTTP 请求处理异常: {}", e);
+                            warn!("XHTTP 请求处理失败: {}", e);
                         }
                     });
                 }
                 Err(e) => {
-                    debug!("H2 连接关闭: {}", e);
+                    debug!("H2 连接结束: {}", e);
                     break;
                 }
             }
@@ -77,19 +77,14 @@ impl H2Handler {
             .get("user-agent")
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
-            
-        let referer = request.headers()
-            .get("referer")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
 
-        // 识别 PC 端 (Go-http-client 或 带有 x_padding 混淆)
-        let is_pc = user_agent.contains("Go-http-client") || referer.contains("x_padding");
+        // 识别 PC 端 (Xray-core 的唯一可靠标识是 Go-http-client)
+        let is_pc = user_agent.contains("Go-http-client");
         
-        // 只有符合 GRPC 声明且不是 PC 伪装的，才开启分帧逻辑
+        // 判定逻辑: 只要是 application/grpc 且不是来自 PC 的 Go-http-client，就认为是移动端 gRPC
         let is_grpc = content_type.contains("grpc") && !is_pc;
         
-        debug!("REQ: {} {} (GRPC_MODE: {}, UA: {}, PC_LIKE: {})", method, path, is_grpc, user_agent, is_pc);
+        debug!("XHTTP REQ: {} {} (GRPC: {}, UA: {})", method, path, is_grpc, user_agent);
 
         if !path.starts_with(&config.path) {
             Self::send_error_response(&mut respond, StatusCode::NOT_FOUND).await?;
@@ -127,11 +122,11 @@ impl H2Handler {
             .map_err(|e| anyhow!("H2 响应构建失败: {}", e))?;
 
         let mut send_stream = respond.send_response(response, false)?;
-        let (client_io, server_io) = tokio::io::duplex(65536); // 加大缓冲区
+        let (client_io, server_io) = tokio::io::duplex(65536);
         tokio::spawn(handler(Box::new(server_io)));
         let (mut client_read, mut client_write) = tokio::io::split(client_io);
 
-        // UP: Client -> VLESS
+        // UP: Client -> Server
         let up_task = async move {
             let mut body = request.into_body();
             let mut leftover = BytesMut::new();
@@ -158,7 +153,7 @@ impl H2Handler {
             Ok::<(), anyhow::Error>(())
         };
 
-        // DOWN: VLESS -> Client
+        // DOWN: Server -> Client
         let down_task = async move {
             let mut buf = vec![0u8; 16384];
             use tokio::io::AsyncReadExt;
