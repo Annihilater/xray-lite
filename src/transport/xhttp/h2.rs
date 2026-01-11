@@ -18,14 +18,14 @@ impl H2Handler {
         Self { config }
     }
 
-    /// 处理 HTTP/2 连接
+    /// 接管 Reality 解密后的原始流
     pub async fn handle<T, F, Fut>(&self, stream: T, handler: F) -> Result<()>
     where
         T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
         F: Fn(Box<dyn crate::server::AsyncStream>) -> Fut + Clone + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<()>> + Send + 'static,
     {
-        info!("开始处理 HTTP/2 连接");
+        debug!("XHTTP: 接管 Reality 流并启动 H2 握手");
 
         let mut builder = server::Builder::new();
         builder
@@ -34,8 +34,7 @@ impl H2Handler {
             .max_frame_size(16384);
 
         let mut connection = builder.handshake(stream).await?;
-        debug!("HTTP/2 握手完成");
-
+        
         while let Some(result) = connection.accept().await {
             match result {
                 Ok((request, respond)) => {
@@ -43,12 +42,12 @@ impl H2Handler {
                     let handler = handler.clone();
                     tokio::spawn(async move {
                         if let Err(e) = Self::handle_request(config, request, respond, handler).await {
-                            warn!("处理请求失败: {}", e);
+                            warn!("XHTTP 请求处理异常: {}", e);
                         }
                     });
                 }
                 Err(e) => {
-                    warn!("接受请求失败: {}", e);
+                    debug!("H2 连接正常关闭或重置: {}", e);
                     break;
                 }
             }
@@ -74,18 +73,10 @@ impl H2Handler {
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
         
-        let user_agent = request.headers()
-            .get("user-agent")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-
-        // 判定准则：
-        // 1. Content-Type 包含 grpc
-        // 2. 不是电脑端 Xray-core (其 UA 包含 Go-http-client)
-        // 3. 必须是 POST 请求 (gRPC 标准行为)
-        let is_grpc = method == "POST" && content_type.contains("grpc") && !user_agent.contains("Go-http-client");
-        
-        debug!("收到请求: {} {} (gRPC Mode: {}, UA: {})", method, path, is_grpc, user_agent);
+        // 核心：只要客户端在 Header 里声明了自己是 grpc，我们就为它服务（分帧）。
+        // 其他情况（包括 PC 端的伪 grpc 或 Raw）一律走裸传输管道。
+        let is_grpc = content_type.contains("grpc");
+        debug!("REQ: {} {} (GRPC_MODE: {})", method, path, is_grpc);
 
         if !path.starts_with(&config.path) {
             Self::send_error_response(&mut respond, StatusCode::NOT_FOUND).await?;
@@ -106,7 +97,6 @@ impl H2Handler {
         Ok(())
     }
 
-    /// 核心双向流处理逻辑
     async fn handle_dual_stream<F, Fut>(
         mut request: Request<h2::RecvStream>,
         mut respond: SendResponse<Bytes>,
@@ -117,81 +107,78 @@ impl H2Handler {
         F: Fn(Box<dyn crate::server::AsyncStream>) -> Fut + Clone + Send + 'static,
         Fut: std::future::Future<Output = Result<()>> + Send + 'static,
     {
+        // 手机端需要严格的 application/grpc，PC 端无所谓
         let response = Response::builder()
             .status(StatusCode::OK)
             .header("content-type", if is_grpc { "application/grpc" } else { "application/octet-stream" })
             .body(())
-            .map_err(|e| anyhow!("构建响应失败: {}", e))?;
+            .map_err(|e| anyhow!("H2 响应构建失败: {}", e))?;
 
         let mut send_stream = respond.send_response(response, false)?;
-        let (client_io, server_io) = tokio::io::duplex(16384);
+        let (client_io, server_io) = tokio::io::duplex(32768); // 增加缓冲区
         tokio::spawn(handler(Box::new(server_io)));
         let (mut client_read, mut client_write) = tokio::io::split(client_io);
 
-        // --- UP TASK (Client -> VLESS) ---
-        let up_task = async move {
-            let mut body = request.into_body();
-            let mut leftover = BytesMut::new();
-            
-            while let Some(chunk_result) = body.data().await {
-                let chunk = chunk_result?;
-                let _ = body.flow_control().release_capacity(chunk.len());
+            // UP: Client -> VLESS
+            let up_task = async move {
+                let mut body = request.into_body();
+                let mut leftover = BytesMut::new();
+                use tokio::io::AsyncWriteExt;
                 
-                if is_grpc {
-                    leftover.extend_from_slice(&chunk);
-                    while leftover.len() >= 5 {
-                        let msg_len = u32::from_be_bytes([leftover[1], leftover[2], leftover[3], leftover[4]]) as usize;
-                        if leftover.len() >= 5 + msg_len {
-                            let _ = leftover.split_to(5);
-                            let data = leftover.split_to(msg_len);
-                            use tokio::io::AsyncWriteExt;
-                            client_write.write_all(&data).await?;
-                        } else {
-                            break; 
+                while let Some(chunk_result) = body.data().await {
+                    let chunk = chunk_result?;
+                    let _ = body.flow_control().release_capacity(chunk.len());
+                    
+                    if is_grpc {
+                        leftover.extend_from_slice(&chunk);
+                        while leftover.len() >= 5 {
+                            let msg_len = u32::from_be_bytes([leftover[1], leftover[2], leftover[3], leftover[4]]) as usize;
+                            if leftover.len() >= 5 + msg_len {
+                                let _ = leftover.split_to(5);
+                                let data = leftover.split_to(msg_len);
+                                client_write.write_all(&data).await?;
+                            } else { break; }
                         }
+                    } else {
+                        client_write.write_all(&chunk).await?;
                     }
-                } else {
-                    use tokio::io::AsyncWriteExt;
-                    client_write.write_all(&chunk).await?;
                 }
-            }
-            Ok::<(), anyhow::Error>(())
-        };
+                Ok::<(), anyhow::Error>(())
+            };
 
-        // --- DOWN TASK (VLESS -> Client) ---
-        let down_task = async move {
-            let mut buf = vec![0u8; 16384];
-            use tokio::io::AsyncReadExt;
-            loop {
-                let n = client_read.read(&mut buf).await?;
-                if n == 0 { break; }
+            // DOWN: VLESS -> Client
+            let down_task = async move {
+                let mut buf = vec![0u8; 16384];
+                use tokio::io::AsyncReadExt;
+                loop {
+                    let n = client_read.read(&mut buf).await?;
+                    if n == 0 { break; }
+                    
+                    if is_grpc {
+                        let mut frame = BytesMut::with_capacity(5 + n);
+                        frame.extend_from_slice(&[0u8]);
+                        frame.extend_from_slice(&(n as u32).to_be_bytes());
+                        frame.extend_from_slice(&buf[..n]);
+                        send_stream.send_data(frame.freeze(), false)?;
+                    } else {
+                        send_stream.send_data(Bytes::copy_from_slice(&buf[..n]), false)?;
+                    }
+                }
                 
                 if is_grpc {
-                    let mut frame = BytesMut::with_capacity(5 + n);
-                    frame.extend_from_slice(&[0u8]);
-                    frame.extend_from_slice(&(n as u32).to_be_bytes());
-                    frame.extend_from_slice(&buf[..n]);
-                    send_stream.send_data(frame.freeze(), false)?;
+                    let mut trailers = hyper::http::HeaderMap::new();
+                    trailers.insert("grpc-status", "0".parse().unwrap());
+                    send_stream.send_trailers(trailers)?;
                 } else {
-                    send_stream.send_data(Bytes::copy_from_slice(&buf[..n]), false)?;
+                    send_stream.send_data(Bytes::new(), true)?;
                 }
-            }
-            
-            if is_grpc {
-                let mut trailers = hyper::http::HeaderMap::new();
-                trailers.insert("grpc-status", "0".parse().unwrap());
-                send_stream.send_trailers(trailers)?;
-            } else {
-                send_stream.send_data(Bytes::new(), true)?;
-            }
-            Ok::<(), anyhow::Error>(())
-        };
+                Ok::<(), anyhow::Error>(())
+            };
 
-        let _ = tokio::join!(up_task, down_task);
-        Ok(())
+            let _ = tokio::join!(up_task, down_task);
+            Ok(())
     }
 
-    /// 单向模式处理
     async fn handle_stream_one<F, Fut>(
         mut request: Request<h2::RecvStream>,
         mut respond: SendResponse<Bytes>,
@@ -205,10 +192,10 @@ impl H2Handler {
             .status(StatusCode::OK)
             .header("content-type", "application/octet-stream")
             .body(())
-            .map_err(|e| anyhow!("构建响应失败: {}", e))?;
+            .map_err(|e| anyhow!("H2 响应构建失败: {}", e))?;
 
         let mut send_stream = respond.send_response(response, false)?;
-        let (client_io, server_io) = tokio::io::duplex(16384);
+        let (client_io, server_io) = tokio::io::duplex(32768);
         tokio::spawn(handler(Box::new(server_io)));
         let (mut client_read, mut client_write) = tokio::io::split(client_io);
 
@@ -243,10 +230,7 @@ impl H2Handler {
         respond: &mut SendResponse<Bytes>,
         status: StatusCode,
     ) -> Result<()> {
-        let response = Response::builder()
-            .status(status)
-            .body(())
-            .map_err(|e| anyhow!("构建错误响应失败: {}", e))?;
+        let response = Response::builder().status(status).body(()).unwrap();
         respond.send_response(response, true)?;
         Ok(())
     }
