@@ -19,6 +19,10 @@ pub struct TlsStream<S> {
 
     // Write buffer (plaintext accumulation)
     write_buffer: BytesMut,
+
+    // 序列号
+    read_seq: u64,
+    write_seq: u64,
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> TlsStream<S> {
