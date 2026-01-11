@@ -24,14 +24,15 @@ A lightweight, high-performance VLESS + Reality proxy server implemented in pure
 | **VLESS UDP** | ✅ Stable | UDP over TCP support / UDP over TCP 支持 |
 | **Reality** | ✅ Stable | TLS 1.3 with dynamic certificate / TLS 1.3 动态证书 |
 | **SNI Sniffing** | ✅ Stable | Auto-detect target domain / 自动嗅探目标域名 |
-| **XHTTP** | ⚠️ PC Only | HTTP/2 transport (PC/Android OK, iOS incompatible) / HTTP/2 传输 (PC/安卓正常, iOS 暂不兼容) |
+| **XHTTP (NEW)** | ✅ Universal | Universal compatibility (PC, iOS, Android) / 全端完美适配 (PC, iOS, 安卓) |
 
 ### Why Xray-Lite? / 为什么选择 Xray-Lite？
 
 - 🚀 **High Performance / 高性能**: Built on Tokio async runtime / 基于 Tokio 异步运行时
 - 🪶 **Lightweight / 轻量级**: ~1.5MB binary, ~10MB RAM / 约 1.5MB 二进制文件，约 10MB 内存
+- 🛡️ **Intelligent Adaptive / 智能自适应**: Auto-pairing XHTTP Split-Streams for mobile clients / 自动焊接移动端分离流
 - 🔒 **Secure / 安全**: Reality protocol resists active probing / Reality 协议抵抗主动探测
-- ✅ **Compatible / 兼容**: Works with v2rayN, Shadowrocket, Passwall, etc. / 兼容 v2rayN、小火箭、Passwall 等
+- ✅ **Compatible / 兼容**: Works with v2rayN, Shadowrocket, Xray-core, etc. / 兼容所有主流客户端
 
 ---
 
@@ -72,15 +73,16 @@ cargo build --release
 
 | Client / 客户端 | Platform / 平台 | Status / 状态 |
 |-----------------|-----------------|---------------|
-| v2rayN | Windows | ✅ Tested |
-| v2rayNG | Android | ✅ Tested |
-| Shadowrocket | iOS | ⚠️ Partial (Reality Only) |
-| Passwall | OpenWrt | ✅ Tested |
-| Xray-core | CLI | ✅ Tested |
+| v2rayN | Windows | ✅ Full Support |
+| v2rayNG | Android | ✅ Full Support |
+| Shadowrocket | iOS | ✅ Full Support (XHTTP OK) |
+| Stash | iOS | ✅ Full Support |
+| Passwall | OpenWrt | ✅ Full Support |
+| Xray-core | CLI | ✅ Full Support |
 
-> **Note**: For mobile clients (Shadowrocket/Stash), please use the **Reality (TCP)** protocol. The **XHTTP (gRPC)** protocol is currently having compatibility issues on iOS.
->
-> **注意**：移动端（小火箭/Stash）请使用 **Reality (TCP)** 协议。**XHTTP (gRPC)** 协议目前在 iOS 上存在兼容性问题。
+> **Note**: For best results on mobile (iOS/Android), XHTTP is recommended. The server will automatically adapt to your client type.
+> 
+> **注意**：移动端建议使用 **XHTTP** 协议。服务器会自动识别并适配您的客户端模式。
 
 ### Configuration Parameters / 配置参数
 
@@ -104,14 +106,12 @@ Server Information / 服务器信息:
 | UUID | From installation output / 安装输出的 UUID |
 | Flow / 流控 | **Leave empty / 留空** |
 | Encryption / 加密 | none |
-| Network / 传输协议 | tcp |
+| Network / 传输协议 | **xhttp** or **tcp** |
 | Security / 传输层安全 | reality |
 | SNI | www.microsoft.com |
 | Public Key / 公钥 | From installation output / 安装输出的公钥 |
 | Short ID / 短 ID | From installation output / 安装输出的短 ID |
 | Fingerprint / 指纹 | chrome |
-
-> ⚠️ **Important / 重要**: Flow must be empty! Do not use `xtls-rprx-vision`. / Flow 必须留空！不要使用 `xtls-rprx-vision`。
 
 ---
 
@@ -136,64 +136,17 @@ sudo journalctl -u xray-lite -f
 
 ---
 
-## 🔧 Configuration / 配置
+## 🏗️ Technical Details / 技术细节
 
-### Example Configuration / 配置示例
+Xray-Lite features a **Universal Adaptive Engine (UAE)** for XHTTP:
+*   **PC/Desktop**: Higher performance H2-Pipe mode.
+*   **iOS/Mobile**: Intelligent Session Pairing for XHTTP Split-Streams.
+*   **Auto-Sync**: Standard gRPC Framing automatically detected.
 
-```json
-{
-  "inbounds": [{
-    "protocol": "vless",
-    "port": 443,
-    "settings": {
-      "clients": [{
-        "id": "YOUR-UUID-HERE"
-      }]
-    },
-    "streamSettings": {
-      "security": "reality",
-      "realitySettings": {
-        "dest": "www.microsoft.com:443",
-        "serverNames": ["www.microsoft.com"],
-        "privateKey": "YOUR-PRIVATE-KEY",
-        "shortIds": ["0123456789abcdef"]
-      }
-    }
-  }]
-}
-```
-
-### Generate Keys / 生成密钥
-
-```bash
-# Generate X25519 key pair / 生成 X25519 密钥对
-cargo run --bin keygen
-
-# Output / 输出:
-# Private key: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-# Public key:  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-```
-
----
-
-## 🏗️ Architecture / 架构
-
-```
-┌─────────────────────────────────────────────────────┐
-│                    Xray-Lite                        │
-├─────────────────────────────────────────────────────┤
-│  ┌──────────────┐  ┌──────────────┐  ┌───────────┐ │
-│  │   Reality    │  │ SNI Sniffer  │  │  XHTTP    │ │
-│  │  (rustls)    │  │              │  │  (Soon)   │ │
-│  └──────────────┘  └──────────────┘  └───────────┘ │
-│  ┌──────────────────────────────────────────────┐  │
-│  │         VLESS Protocol Handler               │  │
-│  └──────────────────────────────────────────────┘  │
-│  ┌──────────────────────────────────────────────┐  │
-│  │         Tokio Async Runtime                  │  │
-│  └──────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────┘
-```
+Xray-Lite 拥有针对 XHTTP 的 **全协议自适应引擎 (UAE)**:
+*   **电脑端**: 采用极速 H2-Pipe 直传。
+*   **移动端**: 自动识别并焊接 XHTTP 分离流（解决小火箭掉线问题）。
+*   **自动同步**: 自动识别标准 gRPC 分帧逻辑。
 
 ---
 
@@ -216,14 +169,6 @@ cargo run --bin keygen
    - Public key must match / 公钥必须匹配
    - Short ID must match / 短 ID 必须匹配
 
-### Build Failed / 编译失败
-
-```bash
-rustup update
-cargo clean
-cargo build --release
-```
-
 ---
 
 ## 📄 License / 许可证
@@ -234,7 +179,7 @@ MIT License - See [LICENSE](LICENSE) for details.
 
 ## 🙏 Acknowledgments / 致谢
 
-- [Xray-core](https://github.com/XTLS/Xray-core) - Reality protocol design / Reality 协议设计
+- [Xray-core](https://github.com/XTLS/Xray-core) - Reality & XHTTP design / 协议设计
 - [Tokio](https://tokio.rs/) - Async runtime / 异步运行时
 - [rustls](https://github.com/rustls/rustls) - TLS implementation / TLS 实现
 
@@ -244,11 +189,7 @@ MIT License - See [LICENSE](LICENSE) for details.
 
 If this project is helpful to you, please consider buying me a coffee!
 
-如果这个项目对您有帮助，请考虑请我喝杯咖啡！
-
-<a href="https://buymeacoffee.com/undeadundead" target="_blank">
-  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="60">
-</a>
+如果你觉得好用，请我喝杯咖啡吧！
 
 **[☕ Buy Me a Coffee / 请我喝咖啡](https://buymeacoffee.com/undeadundead)**
 
