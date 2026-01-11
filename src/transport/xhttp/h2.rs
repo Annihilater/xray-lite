@@ -9,10 +9,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use once_cell::sync::Lazy;
+use rand::{distributions::Alphanumeric, Rng};
 
 use super::XhttpConfig;
 
-/// 全局会话管理器：用于焊接 XHTTP 的 GET（下载）和 POST（上传）流
+/// 全局会话管理器
 struct Session {
     to_vless_tx: mpsc::UnboundedSender<Bytes>,
     notify: Arc<Notify>,
@@ -22,7 +23,7 @@ static SESSIONS: Lazy<Arc<Mutex<HashMap<String, Session>>>> = Lazy::new(|| {
     Arc::new(Mutex::new(HashMap::new()))
 });
 
-/// 终极 H2/XHTTP 处理器 (v0.2.72: 全自适应模式)
+/// 终极 H2/XHTTP 处理器 (v0.2.74: 带全域静默 Padding)
 #[derive(Clone)]
 pub struct H2Handler {
     config: XhttpConfig,
@@ -33,13 +34,23 @@ impl H2Handler {
         Self { config }
     }
 
+    /// 生成随机 Padding 字符串，用于模糊 HTTP 头部长度
+    fn gen_padding() -> String {
+        let mut rng = rand::thread_rng();
+        let len = rng.gen_range(64..512); // 随机 64 到 512 字节
+        rng.sample_iter(&Alphanumeric)
+            .take(len)
+            .map(char::from)
+            .collect()
+    }
+
     pub async fn handle<T, F, Fut>(&self, stream: T, handler: F) -> Result<()>
     where
         T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
         F: Fn(Box<dyn crate::server::AsyncStream>) -> Fut + Clone + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<()>> + Send + 'static,
     {
-        debug!("XHTTP: 启动 V72 纯净自适应引擎");
+        debug!("XHTTP: 启动 V74 全域静默填充引擎");
 
         let mut builder = server::Builder::new();
         builder
@@ -88,13 +99,12 @@ impl H2Handler {
         }
 
         if method == "GET" {
-            // XHTTP 下载流：创建会话并启动业务逻辑
             Self::handle_xhttp_get(path, respond, handler).await?;
         } else if method == "POST" {
             let user_agent = request.headers().get("user-agent").and_then(|v| v.to_str().ok()).unwrap_or("");
             let is_pc = user_agent.contains("Go-http-client");
 
-            // 等候配对逻辑 (针对移动端乱序)
+            // 等候配对逻辑
             if !is_pc {
                 for _ in 0..10 {
                     let found = {
@@ -112,10 +122,8 @@ impl H2Handler {
             };
 
             if let Some(tx) = session_tx {
-                // 配对成功：作为上传流运行
                 Self::handle_xhttp_post(request, respond, tx).await?;
             } else {
-                // 未配对（PC 或直连 gRPC）：作为独立双向流运行
                 let content_type = request.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("");
                 let is_grpc = content_type.contains("grpc") && !is_pc;
                 Self::handle_standalone(request, respond, handler, is_grpc).await?;
@@ -126,7 +134,6 @@ impl H2Handler {
         Ok(())
     }
 
-    /// 模式 A: 独立双向转发 (PC / 标准 gRPC)
     async fn handle_standalone<F, Fut>(
         mut request: Request<h2::RecvStream>,
         mut respond: SendResponse<Bytes>,
@@ -140,6 +147,7 @@ impl H2Handler {
         let response = Response::builder()
             .status(StatusCode::OK)
             .header("content-type", if is_grpc { "application/grpc" } else { "application/octet-stream" })
+            .header("x-padding", Self::gen_padding()) // 注入动态填充
             .body(())
             .unwrap();
 
@@ -205,7 +213,6 @@ impl H2Handler {
         Ok(())
     }
 
-    /// 模式 B: 会话配对 (XHTTP 下载通道)
     async fn handle_xhttp_get<F, Fut>(
         path: String,
         mut respond: SendResponse<Bytes>,
@@ -229,6 +236,7 @@ impl H2Handler {
         let response = Response::builder()
             .status(StatusCode::OK)
             .header("content-type", "application/octet-stream")
+            .header("x-padding", Self::gen_padding()) // 注入动态填充
             .body(())
             .unwrap();
         let mut send_stream = respond.send_response(response, false)?;
@@ -264,7 +272,6 @@ impl H2Handler {
         Ok(())
     }
 
-    /// 入注上传流量
     async fn handle_xhttp_post(
         request: Request<h2::RecvStream>,
         mut respond: SendResponse<Bytes>,
@@ -276,7 +283,11 @@ impl H2Handler {
             let _ = body.flow_control().release_capacity(chunk.len());
             let _ = tx.send(chunk);
         }
-        let response = Response::builder().status(StatusCode::OK).body(()).unwrap();
+        let response = Response::builder()
+            .status(StatusCode::OK)
+            .header("x-padding", Self::gen_padding()) // 注入动态填充
+            .body(())
+            .unwrap();
         respond.send_response(response, true)?;
         Ok(())
     }
