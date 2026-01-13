@@ -17,6 +17,21 @@ use bytes::Buf;
 use ring::hmac;
 
 use super::hello_parser::{self, ClientHelloInfo};
+use std::sync::Mutex;
+use lru::LruCache;
+use once_cell::sync::Lazy;
+
+// 定义缓存 Key
+#[derive(Hash, PartialEq, Eq, Clone)]
+struct CertKey {
+    auth_key_sample: [u8; 8], // 取 auth_key 的前8字节作为 key
+    host: String,
+}
+
+// 全局证书缓存，容量 100
+// 存储 (Cert Bytes, Key Bytes)
+static CERT_CACHE: Lazy<Mutex<LruCache<CertKey, (Vec<u8>, Vec<u8>)>>> = 
+    Lazy::new(|| Mutex::new(LruCache::new(std::num::NonZeroUsize::new(100).unwrap())));
 
 pub struct RealityServerRustls {
     reality_config: Arc<RealityConfig>,
@@ -161,6 +176,22 @@ impl RealityServerRustls {
     }
 
     fn generate_reality_cert(&self, auth_key: &[u8; 32], host: &str) -> Result<(CertificateDer<'static>, PrivateKeyDer<'static>)> {
+        let key = CertKey {
+            auth_key_sample: auth_key[0..8].try_into().unwrap(),
+            host: host.to_string(),
+        };
+
+        // 尝试从缓存获取
+        {
+            let mut cache = CERT_CACHE.lock().unwrap();
+            if let Some((cert_bytes, key_bytes)) = cache.get(&key) {
+                // Reconstruct from cached bytes
+                let cert = CertificateDer::from(cert_bytes.clone());
+                let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_bytes.clone()));
+                return Ok((cert, key));
+            }
+        }
+
         use rcgen::{CertificateParams, KeyPair, PKCS_ED25519};
 
         let key_pair = KeyPair::generate(&PKCS_ED25519).map_err(|e| anyhow!("Key generation fail: {}", e))?;
@@ -186,9 +217,17 @@ impl RealityServerRustls {
         // Overwrite the signature at the end of DER
         cert_der[sig_pos..].copy_from_slice(sig_bytes);
         
-        std::eprintln!("REALITY_STDERR: Generated dynamic cert successfully.");
+        // 存入缓存 (存储原始字节)
+        {
+            let mut cache = CERT_CACHE.lock().unwrap();
+            cache.put(key, (cert_der.clone(), priv_key_der.clone()));
+        }
 
-        Ok((CertificateDer::from(cert_der), PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(priv_key_der))))
+        std::eprintln!("REALITY_STDERR: Generated dynamic cert successfully (New).");
+
+        let result_cert = CertificateDer::from(cert_der);
+        let result_key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(priv_key_der));
+        Ok((result_cert, result_key))
     }
 
     async fn fallback<S>(&self, mut stream: S, prefix: &[u8], dest: &str) -> Result<()> 

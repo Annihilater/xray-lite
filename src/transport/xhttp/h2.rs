@@ -7,12 +7,13 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{mpsc, Notify};
 use tracing::{debug, info, warn};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 use once_cell::sync::Lazy;
 use rand::{distributions::Alphanumeric, Rng};
 
 use super::XhttpConfig;
+use dashmap::DashMap;
 
 /// 全局会话管理器
 struct Session {
@@ -20,17 +21,9 @@ struct Session {
     notify: Arc<Notify>,
 }
 
-static SESSIONS: Lazy<Arc<Mutex<HashMap<String, Session>>>> = Lazy::new(|| {
-    Arc::new(Mutex::new(HashMap::new()))
+static SESSIONS: Lazy<Arc<DashMap<String, Session>>> = Lazy::new(|| {
+    Arc::new(DashMap::new())
 });
-
-/// Helper to safely acquire SESSIONS lock, handling poisoning
-fn lock_sessions() -> std::sync::MutexGuard<'static, HashMap<String, Session>> {
-    SESSIONS.lock().unwrap_or_else(|e| {
-        warn!("CRITICAL: SESSIONS lock poisoned! Recovering state...");
-        e.into_inner()
-    })
-}
 
 /// 终极 H2/XHTTP 处理器 (v0.2.85: 拟态防御版)
 #[derive(Clone)]
@@ -134,19 +127,13 @@ impl H2Handler {
             // 等候配对逻辑
             if !is_pc {
                 for _ in 0..10 {
-                    let found = {
-                        let sessions = lock_sessions();
-                        sessions.contains_key(&path)
-                    };
+                    let found = SESSIONS.contains_key(&path);
                     if found { break; }
                     tokio::time::sleep(Duration::from_millis(50)).await;
                 }
             }
 
-            let session_tx = {
-                let sessions = lock_sessions();
-                sessions.get(&path).map(|s| s.to_vless_tx.clone())
-            };
+            let session_tx = SESSIONS.get(&path).map(|s| s.to_vless_tx.clone());
 
             if let Some(tx) = session_tx {
                 Self::handle_xhttp_post(request, respond, tx).await?;
@@ -262,10 +249,8 @@ impl H2Handler {
     {
         let (to_vless_tx, mut to_vless_rx) = mpsc::unbounded_channel::<Bytes>();
         let notify = Arc::new(Notify::new());
-        {
-            let mut sessions = lock_sessions();
-            sessions.insert(path.clone(), Session { to_vless_tx, notify: notify.clone() });
-        }
+        
+        SESSIONS.insert(path.clone(), Session { to_vless_tx, notify: notify.clone() });
 
         let (client_io, server_io) = tokio::io::duplex(65536);
         tokio::spawn(handler(Box::new(server_io)));
@@ -309,10 +294,7 @@ impl H2Handler {
         let _ = tokio::spawn(upstream);
         let _ = downstream.await;
         
-        {
-            let mut sessions = lock_sessions();
-            sessions.remove(&path);
-        }
+        SESSIONS.remove(&path);
         notify.notify_waiters();
         Ok(())
     }

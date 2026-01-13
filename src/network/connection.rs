@@ -1,6 +1,6 @@
 use anyhow::Result;
 use tokio::net::TcpStream;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, error, info};
 
 /// 代理连接
