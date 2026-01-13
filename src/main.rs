@@ -14,6 +14,10 @@ mod handler;
 use crate::config::Config;
 use crate::server::Server;
 
+#[cfg(not(target_os = "windows"))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {

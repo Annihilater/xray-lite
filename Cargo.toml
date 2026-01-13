@@ -1,6 +1,6 @@
 [package]
 name = "xray-lite"
-version = "0.2.83"
+version = "0.2.84"
 edition = "2021"
 authors = ["Undead <undead-undead@github.com>"]
 description = "Lightweight VLESS+Reality+XHTTP proxy implementation in Rust, featuring anti-probing and raw pipe transport."
@@ -59,6 +59,7 @@ rand = "0.8"
 hex = "0.4"
 base64 = "0.21"
 rcgen = "0.12"
+tikv-jemallocator = "0.5"
 
 
 [dev-dependencies]
