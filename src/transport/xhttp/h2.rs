@@ -26,7 +26,7 @@ static SESSIONS: Lazy<Arc<DashMap<String, Session>>> = Lazy::new(|| {
     Arc::new(DashMap::new())
 });
 
-/// 终极 H2/XHTTP 处理器 (v0.2.99: 动态双向自适应版)
+/// 终极 H2/XHTTP 处理器 (v0.3.00: 模糊协议/极致兼容版)
 #[derive(Clone)]
 pub struct H2Handler {
     config: XhttpConfig,
@@ -71,7 +71,7 @@ impl H2Handler {
         F: Fn(Box<dyn crate::server::AsyncStream>) -> Fut + Clone + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<()>> + Send + 'static,
     {
-        debug!("XHTTP: 启动 V99 拟态防御引擎 (Traffic Shaping + Chameleon Headers)");
+        debug!("XHTTP: 启动 V300 拟态防御引擎 (Traffic Shaping + Chameleon Headers)");
 
         let mut builder = server::Builder::new();
         builder
@@ -194,7 +194,7 @@ impl H2Handler {
     {
         let response = Response::builder()
             .status(StatusCode::OK)
-            .header("content-type", if is_grpc { "application/grpc" } else { "application/octet-stream" })
+            .header("content-type", "application/octet-stream")
             .header("server", "nginx/1.26.0")
             .header("cache-control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0")
             .header("x-padding", Self::gen_padding()) // 注入动态填充
