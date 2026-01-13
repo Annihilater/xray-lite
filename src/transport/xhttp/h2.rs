@@ -5,7 +5,7 @@ use h2::SendStream;
 use hyper::http::{Request, Response, StatusCode};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{mpsc, Notify};
-use tracing::{debug, info, warn, error};
+use tracing::{debug, info, warn, error, trace};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,7 +26,7 @@ static SESSIONS: Lazy<Arc<DashMap<String, Session>>> = Lazy::new(|| {
     Arc::new(DashMap::new())
 });
 
-/// 终极 H2/XHTTP 处理器 (v0.3.0: 模糊协议/极致兼容版)
+/// 终极 H2/XHTTP 处理器 (v0.3.1: 极致兼容/静音版)
 #[derive(Clone)]
 pub struct H2Handler {
     config: XhttpConfig,
@@ -71,7 +71,7 @@ impl H2Handler {
         F: Fn(Box<dyn crate::server::AsyncStream>) -> Fut + Clone + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<()>> + Send + 'static,
     {
-        debug!("XHTTP: 启动 V30 拟态防御引擎 (Traffic Shaping + Chameleon Headers)");
+        debug!("XHTTP: 启动 V31 拟态防御引擎 (Traffic Shaping + Chameleon Headers)");
 
         let mut builder = server::Builder::new();
         builder
@@ -230,7 +230,7 @@ impl H2Handler {
                     }
                 };
                 let _ = body.flow_control().release_capacity(chunk.len());
-                debug!("XHTTP UP: 收到 {} 字节原始数据", chunk.len());
+                trace!("XHTTP UP: 收到 {} 字节原始数据", chunk.len());
                 
                 if first_chunk && use_grpc_framing_up.load(Ordering::Relaxed) {
                     first_chunk = false;
@@ -260,7 +260,7 @@ impl H2Handler {
                         if leftover.len() >= 5 + msg_len {
                             let _ = leftover.split_to(5);
                             let data = leftover.split_to(msg_len);
-                            debug!("XHTTP UP: 解析到 {} 字节 gRPC 消息", data.len());
+                            trace!("XHTTP UP: 解析到 {} 字节 gRPC 消息", data.len());
                             client_write.write_all(&data).await?;
                         } else { 
                             debug!("XHTTP UP: gRPC 消息未全 (需要 {} 字节，现有 {} 字节)", 5 + msg_len, leftover.len());
@@ -289,7 +289,7 @@ impl H2Handler {
                     debug!("XHTTP DOWN: VLESS 已关闭输出");
                     break; 
                 }
-                debug!("XHTTP DOWN: 从 VLESS 收到 {} 字节数据", n);
+                trace!("XHTTP DOWN: 从 VLESS 收到 {} 字节数据", n);
                 
                 if use_grpc_framing_down.load(Ordering::Relaxed) {
                     let mut frame = BytesMut::with_capacity(5 + n);
