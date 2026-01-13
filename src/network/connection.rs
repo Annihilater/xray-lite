@@ -26,18 +26,50 @@ where
     pub async fn relay(mut self) -> Result<()> {
         debug!("开始双向数据转发");
 
-        // 使用 tokio 的 copy_bidirectional 进行高效的双向转发
-        match tokio::io::copy_bidirectional(&mut self.client_stream, &mut self.remote_stream).await
-        {
-            Ok((client_to_remote, remote_to_client)) => {
-                info!(
-                    "连接关闭 - 上行: {} 字节, 下行: {} 字节",
-                    client_to_remote, remote_to_client
-                );
+        // 优化：自定义双向拷贝，使用 16KB 缓冲区
+        // tokio::io::copy_bidirectional 默认使用 2KB (或 8KB) 缓冲区，较小。
+        // 在大流量下，增加缓冲区可以显著减少 read/write 系统调用次数，降低 CPU 占用并提升吞吐量。
+        let (mut c_r, mut c_w) = tokio::io::split(self.client_stream);
+        let (mut r_r, mut r_w) = tokio::io::split(self.remote_stream);
+
+        let client_to_remote = async {
+            let mut buf = vec![0u8; 16 * 1024]; // 16KB Buffer
+            loop {
+                let n = c_r.read(&mut buf).await?;
+                if n == 0 {
+                    // EOF
+                    r_w.shutdown().await?;
+                    break;
+                }
+                r_w.write_all(&buf[..n]).await?;
+            }
+            Ok::<u64, std::io::Error>(0) // 简化处理，不统计精确字节数以减少开销
+        };
+
+        let remote_to_client = async {
+            let mut buf = vec![0u8; 16 * 1024]; // 16KB Buffer
+            loop {
+                let n = r_r.read(&mut buf).await?;
+                if n == 0 {
+                    // EOF
+                    c_w.shutdown().await?;
+                    break;
+                }
+                c_w.write_all(&buf[..n]).await?;
+            }
+            Ok::<u64, std::io::Error>(0)
+        };
+
+        // 使用 try_join! 并发执行两个拷贝任务
+        // 任何一方出错或完成，都会结束
+        match tokio::try_join!(client_to_remote, remote_to_client) {
+            Ok(_) => {
+                debug!("连接正常关闭");
                 Ok(())
             }
             Err(e) => {
-                error!("数据转发错误: {}", e);
+                // 如果是正常的连接重置或关闭，不记录为错误
+                debug!("连接断开: {}", e);
                 Err(e.into())
             }
         }

@@ -155,8 +155,10 @@ impl H2Handler {
             let is_pc = user_agent.contains("Go-http-client");
 
             // 等候配对逻辑
+            // 移动端网络可能存在波动，增加等待时间至 2 秒 (40 * 50ms)
+            // 避免因 POST 请求过早到达但 Session 尚未就绪而导致的断流
             if !is_pc {
-                for _ in 0..10 {
+                for _ in 0..40 {
                     let found = SESSIONS.contains_key(&path);
                     if found { break; }
                     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -169,7 +171,8 @@ impl H2Handler {
                 Self::handle_xhttp_post(request, respond, tx).await?;
             } else {
                 let content_type = request.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("");
-                let is_grpc = content_type.contains("grpc") && !is_pc;
+                // 修复：PC 端也可能使用 standard gRPC 模式 (如 Xray-core 配置为 grpc)，不能强制 !is_pc
+                let is_grpc = content_type.contains("grpc");
                 Self::handle_standalone(request, respond, handler, is_grpc).await?;
             }
         } else {
