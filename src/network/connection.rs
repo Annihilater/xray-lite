@@ -1,9 +1,9 @@
 use std::sync::Mutex;
 use once_cell::sync::Lazy;
-use anyhow::Result;
-use tokio::net::TcpStream;
+use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Result};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 const BUFFER_SIZE: usize = 16 * 1024;
 static BUFFER_POOL: Lazy<Mutex<Vec<Vec<u8>>>> = Lazy::new(|| Mutex::new(Vec::with_capacity(256)));

@@ -54,7 +54,7 @@ async fn main() -> Result<()> {
         .with_thread_ids(true)
         .init();
 
-    info!("🚀 Starting VLESS+Reality+XHTTP Server [V94-DEBUG]");
+    info!("🚀 Starting VLESS+Reality+XHTTP Server [V95-DEBUG]");
     info!("📄 Loading config from: {}", args.config);
 
     // 加载配置

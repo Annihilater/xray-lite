@@ -5,7 +5,7 @@ use h2::SendStream;
 use hyper::http::{Request, Response, StatusCode};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{mpsc, Notify};
-use tracing::{debug, info, warn};
+use tracing::{debug, info, warn, error};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -213,6 +213,10 @@ impl H2Handler {
             let mut leftover = BytesMut::new();
             use tokio::io::AsyncWriteExt;
             debug!("XHTTP UP: 开始从请求体读取数据");
+            
+            let mut is_grpc_mode = is_grpc;
+            let mut first_chunk = true;
+
             while let Ok(Some(chunk)) = tokio::time::timeout(Duration::from_secs(30), body.data()).await {
                 let chunk = match chunk {
                     Ok(c) => c,
@@ -224,7 +228,17 @@ impl H2Handler {
                 let _ = body.flow_control().release_capacity(chunk.len());
                 debug!("XHTTP UP: 收到 {} 字节原始数据", chunk.len());
                 
-                if is_grpc {
+                if first_chunk && is_grpc_mode {
+                    first_chunk = false;
+                    // gRPC 帧首字节必须是 0x00 (非压缩) 或 0x01 (压缩)
+                    // 如果不是，说明客户端虽然传了 grpc header 但实际上发的是普通流
+                    if chunk.len() > 0 && chunk[0] != 0x00 && chunk[0] != 0x01 {
+                        warn!("XHTTP UP: 检测到首字节 ({:02x}) 非 gRPC 格式，自动回退到普通流模式", chunk[0]);
+                        is_grpc_mode = false;
+                    }
+                }
+
+                if is_grpc_mode {
                     leftover.extend_from_slice(&chunk);
                     while leftover.len() >= 5 {
                         let msg_len = u32::from_be_bytes([leftover[1], leftover[2], leftover[3], leftover[4]]) as usize;
