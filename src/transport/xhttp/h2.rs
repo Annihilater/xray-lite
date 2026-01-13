@@ -25,7 +25,7 @@ static SESSIONS: Lazy<Arc<DashMap<String, Session>>> = Lazy::new(|| {
     Arc::new(DashMap::new())
 });
 
-/// 终极 H2/XHTTP 处理器 (v0.2.85: 拟态防御版)
+/// 终极 H2/XHTTP 处理器 (v0.2.93: 拟态防御版)
 #[derive(Clone)]
 pub struct H2Handler {
     config: XhttpConfig,
@@ -70,7 +70,7 @@ impl H2Handler {
         F: Fn(Box<dyn crate::server::AsyncStream>) -> Fut + Clone + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<()>> + Send + 'static,
     {
-        debug!("XHTTP: 启动 V85 拟态防御引擎 (Traffic Shaping + Chameleon Headers)");
+        debug!("XHTTP: 启动 V93 拟态防御引擎 (Traffic Shaping + Chameleon Headers)");
 
         let mut builder = server::Builder::new();
         builder
@@ -202,6 +202,8 @@ impl H2Handler {
 
         let mut send_stream = respond.send_response(response, false)?;
         let (client_io, server_io) = tokio::io::duplex(65536);
+        
+        debug!("XHTTP Standard: 启动 VLESS 处理逻辑 (is_grpc: {})", is_grpc);
         tokio::spawn(handler(Box::new(server_io)));
         let (mut client_read, mut client_write) = tokio::io::split(client_io);
 
@@ -210,9 +212,18 @@ impl H2Handler {
             let mut body = request.into_body();
             let mut leftover = BytesMut::new();
             use tokio::io::AsyncWriteExt;
-            while let Some(chunk_res) = body.data().await {
-                let chunk = chunk_res?;
+            debug!("XHTTP UP: 开始从请求体读取数据");
+            while let Ok(Some(chunk)) = tokio::time::timeout(Duration::from_secs(30), body.data()).await {
+                let chunk = match chunk {
+                    Ok(c) => c,
+                    Err(e) => {
+                        error!("XHTTP UP: 读取请求体错误: {}", e);
+                        break;
+                    }
+                };
                 let _ = body.flow_control().release_capacity(chunk.len());
+                debug!("XHTTP UP: 收到 {} 字节原始数据", chunk.len());
+                
                 if is_grpc {
                     leftover.extend_from_slice(&chunk);
                     while leftover.len() >= 5 {
@@ -220,13 +231,18 @@ impl H2Handler {
                         if leftover.len() >= 5 + msg_len {
                             let _ = leftover.split_to(5);
                             let data = leftover.split_to(msg_len);
+                            debug!("XHTTP UP: 解析到 {} 字节 gRPC 消息", data.len());
                             client_write.write_all(&data).await?;
-                        } else { break; }
+                        } else { 
+                            debug!("XHTTP UP: gRPC 消息未全 (需要 {} 字节，现有 {} 字节)", 5 + msg_len, leftover.len());
+                            break; 
+                        }
                     }
                 } else {
                     client_write.write_all(&chunk).await?;
                 }
             }
+            debug!("XHTTP UP: 请求体读取结束");
             Ok::<(), anyhow::Error>(())
         };
 
@@ -234,12 +250,17 @@ impl H2Handler {
         let down_task = async move {
             let mut buf = BytesMut::with_capacity(65536);
             use tokio::io::AsyncReadExt;
+            debug!("XHTTP DOWN: 开始从 VLESS 读取数据并发送给客户端");
             loop {
                 if buf.capacity() < 2048 {
                     buf.reserve(65536);
                 }
                 let n = client_read.read_buf(&mut buf).await?;
-                if n == 0 { break; }
+                if n == 0 { 
+                    debug!("XHTTP DOWN: VLESS 已关闭输出");
+                    break; 
+                }
+                debug!("XHTTP DOWN: 从 VLESS 收到 {} 字节数据", n);
                 
                 if is_grpc {
                     let mut frame = BytesMut::with_capacity(5 + n);
@@ -256,6 +277,8 @@ impl H2Handler {
                     Self::send_split_data(&mut buf, &mut send_stream)?;
                 }
             }
+            
+            debug!("XHTTP DOWN: 发送结束标记 (Trailers/EndStream)");
             if is_grpc {
                 let mut trailers = hyper::http::HeaderMap::new();
                 trailers.insert("grpc-status", "0".parse().unwrap());
