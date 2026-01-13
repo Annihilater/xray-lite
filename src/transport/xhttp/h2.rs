@@ -25,7 +25,7 @@ static SESSIONS: Lazy<Arc<DashMap<String, Session>>> = Lazy::new(|| {
     Arc::new(DashMap::new())
 });
 
-/// 终极 H2/XHTTP 处理器 (v0.2.93: 拟态防御版)
+/// 终极 H2/XHTTP 处理器 (v0.2.97: 拟态防御/稳定优化版)
 #[derive(Clone)]
 pub struct H2Handler {
     config: XhttpConfig,
@@ -70,7 +70,7 @@ impl H2Handler {
         F: Fn(Box<dyn crate::server::AsyncStream>) -> Fut + Clone + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<()>> + Send + 'static,
     {
-        debug!("XHTTP: 启动 V93 拟态防御引擎 (Traffic Shaping + Chameleon Headers)");
+        debug!("XHTTP: 启动 V97 拟态防御引擎 (Traffic Shaping + Chameleon Headers)");
 
         let mut builder = server::Builder::new();
         builder
@@ -242,6 +242,17 @@ impl H2Handler {
                     leftover.extend_from_slice(&chunk);
                     while leftover.len() >= 5 {
                         let msg_len = u32::from_be_bytes([leftover[1], leftover[2], leftover[3], leftover[4]]) as usize;
+                        
+                        // 关键修复：长度校验 
+                        // 如果长度超过 64KB，通常不是合法的 gRPC 代理包格式 (通常为 VLESS 原始流误入)
+                        if msg_len > 65535 {
+                            warn!("XHTTP UP: 检测到异常消息长度 ({}), 判定为 VLESS 原始流，转回普通模式", msg_len);
+                            is_grpc_mode = false;
+                            client_write.write_all(&leftover).await?;
+                            leftover.clear();
+                            break;
+                        }
+
                         if leftover.len() >= 5 + msg_len {
                             let _ = leftover.split_to(5);
                             let data = leftover.split_to(msg_len);
