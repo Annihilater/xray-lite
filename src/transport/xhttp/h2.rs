@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use bytes::{Buf, Bytes, BytesMut};
 use h2::server::{self, SendResponse};
+use h2::SendStream;
 use hyper::http::{Request, Response, StatusCode};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{mpsc, Notify};
@@ -31,7 +32,7 @@ fn lock_sessions() -> std::sync::MutexGuard<'static, HashMap<String, Session>> {
     })
 }
 
-/// 终极 H2/XHTTP 处理器 (v0.2.74: 带全域静默 Padding)
+/// 终极 H2/XHTTP 处理器 (v0.2.85: 拟态防御版)
 #[derive(Clone)]
 pub struct H2Handler {
     config: XhttpConfig,
@@ -52,13 +53,31 @@ impl H2Handler {
             .collect()
     }
 
+    /// 智能分片发送（流量整形/Shredder）
+    /// 将大数据块切分成随机大小的小块发送，消除长度特征
+    fn send_split_data(src: &mut BytesMut, send_stream: &mut SendStream<Bytes>) -> Result<()> {
+        let mut rng = rand::thread_rng();
+        
+        while src.has_remaining() {
+            // 随机切片大小：500B - 1400B
+            // 既模拟了典型的 web 数据包大小，又避开了常见的 MTU 边界
+            let chunk_size = rng.gen_range(500..1400);
+            let split_len = std::cmp::min(src.len(), chunk_size);
+            
+            // split_to 会消耗 src 前面的字节，返回新的 Bytes (Zero-copy)
+            let chunk = src.split_to(split_len).freeze();
+            send_stream.send_data(chunk, false)?;
+        }
+        Ok(())
+    }
+
     pub async fn handle<T, F, Fut>(&self, stream: T, handler: F) -> Result<()>
     where
         T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
         F: Fn(Box<dyn crate::server::AsyncStream>) -> Fut + Clone + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<()>> + Send + 'static,
     {
-        debug!("XHTTP: 启动 V74 全域静默填充引擎");
+        debug!("XHTTP: 启动 V85 拟态防御引擎 (Traffic Shaping + Chameleon Headers)");
 
         let mut builder = server::Builder::new();
         builder
@@ -155,6 +174,8 @@ impl H2Handler {
         let response = Response::builder()
             .status(StatusCode::OK)
             .header("content-type", if is_grpc { "application/grpc" } else { "application/octet-stream" })
+            .header("server", "nginx/1.26.0")
+            .header("cache-control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0")
             .header("x-padding", Self::gen_padding()) // 注入动态填充
             .body(())
             .unwrap();
@@ -189,7 +210,7 @@ impl H2Handler {
             Ok::<(), anyhow::Error>(())
         };
 
-        // DOWN
+        // DOWN (使用 Traffic Shaping)
         let down_task = async move {
             let mut buf = BytesMut::with_capacity(65536);
             use tokio::io::AsyncReadExt;
@@ -207,11 +228,12 @@ impl H2Handler {
                     // copy needed here as we are framing
                     frame.extend_from_slice(&buf[..n]);
                     buf.advance(n);
-                    send_stream.send_data(frame.freeze(), false)?;
+
+                    // 整形发送 gRPC 帧
+                    Self::send_split_data(&mut frame, &mut send_stream)?;
                 } else {
-                    // Zero-copy split
-                    let chunk = buf.split_to(n).freeze();
-                    send_stream.send_data(chunk, false)?;
+                    // 整形发送普通数据流
+                    Self::send_split_data(&mut buf, &mut send_stream)?;
                 }
             }
             if is_grpc {
@@ -252,6 +274,8 @@ impl H2Handler {
         let response = Response::builder()
             .status(StatusCode::OK)
             .header("content-type", "application/octet-stream")
+            .header("server", "nginx/1.26.0")
+            .header("cache-control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0")
             .header("x-padding", Self::gen_padding()) // 注入动态填充
             .body(())
             .unwrap();
@@ -266,8 +290,9 @@ impl H2Handler {
                 }
                 let n = client_read.read_buf(&mut buf).await?;
                 if n == 0 { break; }
-                let chunk = buf.split_to(n).freeze();
-                send_stream.send_data(chunk, false)?;
+                
+                // 整形发送
+                Self::send_split_data(&mut buf, &mut send_stream)?;
             }
             send_stream.send_data(Bytes::new(), true)?;
             Ok::<(), anyhow::Error>(())
@@ -305,6 +330,8 @@ impl H2Handler {
         }
         let response = Response::builder()
             .status(StatusCode::OK)
+            .header("server", "nginx/1.26.0")
+            .header("cache-control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0")
             .header("x-padding", Self::gen_padding()) // 注入动态填充
             .body(())
             .unwrap();
@@ -316,7 +343,11 @@ impl H2Handler {
         respond: &mut SendResponse<Bytes>,
         status: StatusCode,
     ) -> Result<()> {
-        let response = Response::builder().status(status).body(()).unwrap();
+        let response = Response::builder()
+            .status(status)
+            .header("server", "nginx/1.26.0")
+            .body(())
+            .unwrap();
         respond.send_response(response, true)?;
         Ok(())
     }
