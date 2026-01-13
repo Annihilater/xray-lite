@@ -8,6 +8,7 @@ use tokio::sync::{mpsc, Notify};
 use tracing::{debug, info, warn, error};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use once_cell::sync::Lazy;
 use rand::{distributions::Alphanumeric, Rng};
@@ -25,7 +26,7 @@ static SESSIONS: Lazy<Arc<DashMap<String, Session>>> = Lazy::new(|| {
     Arc::new(DashMap::new())
 });
 
-/// 终极 H2/XHTTP 处理器 (v0.2.97: 拟态防御/稳定优化版)
+/// 终极 H2/XHTTP 处理器 (v0.2.98: 动态双向自适应版)
 #[derive(Clone)]
 pub struct H2Handler {
     config: XhttpConfig,
@@ -70,7 +71,7 @@ impl H2Handler {
         F: Fn(Box<dyn crate::server::AsyncStream>) -> Fut + Clone + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<()>> + Send + 'static,
     {
-        debug!("XHTTP: 启动 V97 拟态防御引擎 (Traffic Shaping + Chameleon Headers)");
+        debug!("XHTTP: 启动 V98 拟态防御引擎 (Traffic Shaping + Chameleon Headers)");
 
         let mut builder = server::Builder::new();
         builder
@@ -203,6 +204,10 @@ impl H2Handler {
         let mut send_stream = respond.send_response(response, false)?;
         let (client_io, server_io) = tokio::io::duplex(65536);
         
+        let use_grpc_framing = Arc::new(AtomicBool::new(is_grpc));
+        let use_grpc_framing_up = use_grpc_framing.clone();
+        let use_grpc_framing_down = use_grpc_framing.clone();
+
         debug!("XHTTP Standard: 启动 VLESS 处理逻辑 (is_grpc: {})", is_grpc);
         tokio::spawn(handler(Box::new(server_io)));
         let (mut client_read, mut client_write) = tokio::io::split(client_io);
@@ -214,7 +219,6 @@ impl H2Handler {
             use tokio::io::AsyncWriteExt;
             debug!("XHTTP UP: 开始从请求体读取数据");
             
-            let mut is_grpc_mode = is_grpc;
             let mut first_chunk = true;
 
             while let Ok(Some(chunk)) = tokio::time::timeout(Duration::from_secs(30), body.data()).await {
@@ -228,17 +232,17 @@ impl H2Handler {
                 let _ = body.flow_control().release_capacity(chunk.len());
                 debug!("XHTTP UP: 收到 {} 字节原始数据", chunk.len());
                 
-                if first_chunk && is_grpc_mode {
+                if first_chunk && use_grpc_framing_up.load(Ordering::Relaxed) {
                     first_chunk = false;
                     // gRPC 帧首字节必须是 0x00 (非压缩) 或 0x01 (压缩)
                     // 如果不是，说明客户端虽然传了 grpc header 但实际上发的是普通流
                     if chunk.len() > 0 && chunk[0] != 0x00 && chunk[0] != 0x01 {
                         warn!("XHTTP UP: 检测到首字节 ({:02x}) 非 gRPC 格式，自动回退到普通流模式", chunk[0]);
-                        is_grpc_mode = false;
+                        use_grpc_framing_up.store(false, Ordering::Relaxed);
                     }
                 }
 
-                if is_grpc_mode {
+                if use_grpc_framing_up.load(Ordering::Relaxed) {
                     leftover.extend_from_slice(&chunk);
                     while leftover.len() >= 5 {
                         let msg_len = u32::from_be_bytes([leftover[1], leftover[2], leftover[3], leftover[4]]) as usize;
@@ -247,7 +251,7 @@ impl H2Handler {
                         // 如果长度超过 64KB，通常不是合法的 gRPC 代理包格式 (通常为 VLESS 原始流误入)
                         if msg_len > 65535 {
                             warn!("XHTTP UP: 检测到异常消息长度 ({}), 判定为 VLESS 原始流，转回普通模式", msg_len);
-                            is_grpc_mode = false;
+                            use_grpc_framing_up.store(false, Ordering::Relaxed);
                             client_write.write_all(&leftover).await?;
                             leftover.clear();
                             break;
@@ -287,7 +291,7 @@ impl H2Handler {
                 }
                 debug!("XHTTP DOWN: 从 VLESS 收到 {} 字节数据", n);
                 
-                if is_grpc {
+                if use_grpc_framing_down.load(Ordering::Relaxed) {
                     let mut frame = BytesMut::with_capacity(5 + n);
                     frame.extend_from_slice(&[0u8]);
                     frame.extend_from_slice(&(n as u32).to_be_bytes());
@@ -304,7 +308,7 @@ impl H2Handler {
             }
             
             debug!("XHTTP DOWN: 发送结束标记 (Trailers/EndStream)");
-            if is_grpc {
+            if use_grpc_framing_down.load(Ordering::Relaxed) {
                 let mut trailers = hyper::http::HeaderMap::new();
                 trailers.insert("grpc-status", "0".parse().unwrap());
                 send_stream.send_trailers(trailers)?;
