@@ -190,7 +190,7 @@ pub async fn serve_vless(
             
             // 客户端 -> UDP
             let send_task = async {
-                let mut read_buf = vec![0u8; 8192];
+                let mut read_buf = vec![0u8; 16384]; // 优化：16KB Buffer
                 let mut last_activity = tokio::time::Instant::now();
                 
                 loop {
@@ -219,7 +219,7 @@ pub async fn serve_vless(
             
             // UDP -> 客户端
             let recv_task = async {
-                let mut recv_buf = vec![0u8; 8192];
+                let mut recv_buf = vec![0u8; 16384]; // 优化：16KB Buffer
                 let mut last_activity = tokio::time::Instant::now();
                 loop {
                     let recv_timeout = session_timeout.saturating_sub(last_activity.elapsed());
