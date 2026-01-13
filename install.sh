@@ -19,7 +19,7 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Version / 版本
-VERSION="v0.3.1"
+VERSION="v0.3.2"
 REPO="undead-undead/xray-lite"
 
 echo -e "${BLUE}=========================================${NC}"
@@ -109,7 +109,6 @@ echo ""
 echo -e "${YELLOW}[4/6] Generating configuration... / 生成配置...${NC}"
 
 # Generate keys / 生成密钥
-echo "Generating X25519 key pair... / 生成 X25519 密钥对..."
 KEYGEN_OUTPUT=$(./keygen)
 PRIVATE_KEY=$(echo "$KEYGEN_OUTPUT" | grep "Private key:" | awk '{print $3}')
 PUBLIC_KEY=$(echo "$KEYGEN_OUTPUT" | grep "Public key:" | awk '{print $3}')
@@ -318,9 +317,9 @@ RestartSec=10s
 LimitNOFILE=1000000
 LimitNPROC=512
 
-StandardOutput=journal
-StandardError=journal
 SyslogIdentifier=xray-lite
+StandardOutput=null
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

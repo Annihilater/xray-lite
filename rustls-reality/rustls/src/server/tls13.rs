@@ -800,6 +800,7 @@ mod client_hello {
     ) -> Result<(), Error> {
         let message = construct_server_verify_message(&transcript.get_current_hash());
 
+        /*
         std::eprintln!(
             "REALITY_STDERR: emit_certificate_verify checks. Schemes: {:?}",
             schemes
@@ -808,11 +809,12 @@ mod client_hello {
             "REALITY_STDOUT: emit_certificate_verify checks. Schemes: {:?}",
             schemes
         );
+        */
 
         let signer = signing_key
             .choose_scheme(schemes)
             .or_else(|| {
-                std::eprintln!("REALITY_STDERR: Standard choose_scheme failed. Attempting force-fallback to ED25519.");
+                // std::eprintln!("REALITY_STDERR: Standard choose_scheme failed. Attempting force-fallback to ED25519.");
                 signing_key.choose_scheme(&[SignatureScheme::ED25519])
             })
             .ok_or_else(|| {

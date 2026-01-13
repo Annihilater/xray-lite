@@ -26,7 +26,7 @@ static SESSIONS: Lazy<Arc<DashMap<String, Session>>> = Lazy::new(|| {
     Arc::new(DashMap::new())
 });
 
-/// 终极 H2/XHTTP 处理器 (v0.3.1: 极致兼容/静音版)
+/// 终极 H2/XHTTP 处理器 (v0.3.2: 极致静默版)
 #[derive(Clone)]
 pub struct H2Handler {
     config: XhttpConfig,
@@ -71,7 +71,7 @@ impl H2Handler {
         F: Fn(Box<dyn crate::server::AsyncStream>) -> Fut + Clone + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<()>> + Send + 'static,
     {
-        debug!("XHTTP: 启动 V31 拟态防御引擎 (Traffic Shaping + Chameleon Headers)");
+        debug!("XHTTP: 启动 V32 拟态防御引擎 (Traffic Shaping + Chameleon Headers)");
 
         let mut builder = server::Builder::new();
         builder
@@ -225,7 +225,12 @@ impl H2Handler {
                 let chunk = match chunk {
                     Ok(c) => c,
                     Err(e) => {
-                        error!("XHTTP UP: 读取请求体错误: {}", e);
+                        let err_str = e.to_string();
+                        if err_str.contains("stream no longer needed") || err_str.contains("connection reset") {
+                            debug!("XHTTP UP: 连接正常结束 / 重置: {}", e);
+                        } else {
+                            error!("XHTTP UP: 读取请求体错误: {}", e);
+                        }
                         break;
                     }
                 };

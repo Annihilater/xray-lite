@@ -19,7 +19,7 @@ use crate::server::Server;
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version = "0.3.2", about, long_about = None)]
 struct Args {
     /// 配置文件路径
     #[arg(short, long, default_value = "config.json")]
@@ -54,7 +54,7 @@ async fn main() -> Result<()> {
         .with_thread_ids(true)
         .init();
 
-    info!("🚀 Starting VLESS+Reality+XHTTP Server [V31-STABLE]");
+    info!("🚀 Starting VLESS+Reality+XHTTP Server [V32-STABLE]");
     info!("📄 Loading config from: {}", args.config);
 
     // 加载配置
