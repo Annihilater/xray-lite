@@ -79,6 +79,36 @@ impl H2Handler {
             .max_frame_size(16384);
 
         let mut connection = builder.handshake(stream).await?;
+
+        // --- 🌟 H2 Ping-Pong 随机心跳混淆 (V89) ---
+        // 获取 PingPong 句柄，启动后台任务随机发送 PING
+        // 这会迫使客户端回复 ACK，制造双向的背景流量噪声，干扰时序分析。
+        if let Some(mut ping_pong) = connection.ping_pong() {
+            tokio::spawn(async move {
+                loop {
+                    // 随机休眠 15 - 45 秒 (模拟真实心跳间隔，不要太频繁以免浪费流量)
+                    let sleep_ms = {
+                         let mut rng = rand::thread_rng();
+                         rng.gen_range(15000..45000)
+                    };
+                    tokio::time::sleep(tokio::time::Duration::from_millis(sleep_ms)).await;
+
+                    // 生成随机 8 字节载荷 (h2 crate 限制 payload 为 opaque，主要依赖时序混淆)
+                    let _payload: [u8; 8] = {
+                        let mut rng = rand::thread_rng();
+                        rng.gen()
+                    };
+                    
+                    // 发送 PING
+                    // send_ping 返回 Result，不是 Future，且 opaque() 不接受参数
+                    if ping_pong.send_ping(h2::Ping::opaque()).is_err() {
+                        break;
+                    }
+                    debug!("🌪️ H2 Noise: Sent random PING");
+                }
+            });
+        }
+        // -------------------------------------------
         
         while let Some(result) = connection.accept().await {
             match result {
