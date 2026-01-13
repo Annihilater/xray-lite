@@ -24,10 +24,7 @@ A lightweight, high-performance VLESS + Reality proxy server implemented in pure
 | **VLESS UDP** | ✅ Stable | UDP over TCP support / UDP over TCP 支持 |
 | **Reality** | ✅ Stable | TLS 1.3 with dynamic certificate / TLS 1.3 动态证书 |
 | **SNI Sniffing** | ✅ Stable | Auto-detect target domain / 自动嗅探目标域名 |
-| **<span style="color:red">H2 Ping-Pong</span>** | ✅ New | Server-side random heartbeat noise (Anti-Censorship) / 服务端随机心跳噪声（抗封锁） |
-| **<span style="color:red">Traffic Shaping</span>** | ✅ Stealth | Randomizes packet sizes to defeat ML detection / 动态流量整形，对抗机器学习识别 |
-| **<span style="color:red">Chameleon Headers</span>**| ✅ Stealth | Mimics Nginx server responses perfectly / 拟态伪装，完美模拟 Nginx 响应头 |
-| **XHTTP (NEW)** | ✅ Universal | Universal compatibility (PC, iOS, Android) / 全端完美适配 (PC, iOS, 安卓) |
+| **XHTTP (NEW)** | ✅ Universal | Universal compatibility (PC, iOS, Android) / 全端完美适配 (PC, iOS, 安卓)<br>Integrates: **<span style="color:red">H2 Ping-Pong</span>**, **<span style="color:red">Traffic Shaping</span>**, **<span style="color:red">Chameleon Headers</span>** |
 
 ### Why Xray-Lite? / 为什么选择 Xray-Lite？
 
