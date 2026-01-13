@@ -24,6 +24,7 @@ A lightweight, high-performance VLESS + Reality proxy server implemented in pure
 | **VLESS UDP** | ✅ Stable | UDP over TCP support / UDP over TCP 支持 |
 | **Reality** | ✅ Stable | TLS 1.3 with dynamic certificate / TLS 1.3 动态证书 |
 | **SNI Sniffing** | ✅ Stable | Auto-detect target domain / 自动嗅探目标域名 |
+| **H2 Ping-Pong** | ✅ New | Server-side random heartbeat noise (Anti-Censorship) / 服务端随机心跳噪声（抗封锁） |
 | **XHTTP (NEW)** | ✅ Universal | Universal compatibility (PC, iOS, Android) / 全端完美适配 (PC, iOS, 安卓) |
 
 ### Why Xray-Lite? / 为什么选择 Xray-Lite？
@@ -146,11 +147,13 @@ Xray-Lite features a **Universal Adaptive Engine (UAE)** for XHTTP:
 *   **PC/Desktop**: Higher performance H2-Pipe mode.
 *   **iOS/Mobile**: Intelligent Session Pairing for XHTTP Split-Streams.
 *   **Auto-Sync**: Standard gRPC Framing automatically detected.
+*   **Anti-Censorship**: **H2 Ping-Pong** generates random bi-directional noise to defeat traffic analysis.
 
 Xray-Lite 拥有针对 XHTTP 的 **全协议自适应引擎 (UAE)**:
 *   **电脑端**: 采用极速 H2-Pipe 直传。
 *   **移动端**: 自动识别并焊接 XHTTP 分离流（解决小火箭掉线问题）。
 *   **自动同步**: 自动识别标准 gRPC 分帧逻辑。
+*   **抗封锁**: **H2 Ping-Pong** 机制产生随机双向噪声，干扰流量分析。
 
 ---
 
