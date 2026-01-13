@@ -13,7 +13,8 @@ pub async fn serve_vless(
     tcp_no_delay: bool,
 ) -> Result<()> {
     // 读取 VLESS 请求（带超时，支持多次读取）
-    let mut buf = bytes::BytesMut::with_capacity(4096);
+    // Optimize: 增大缓冲区至 16KB 以减少系统调用，提升高吞吐场景性能
+    let mut buf = bytes::BytesMut::with_capacity(16384);
     use tokio::io::AsyncReadExt;
     use tokio::time::{timeout, Duration};
     
@@ -84,7 +85,7 @@ pub async fn serve_vless(
             if sniffing_enabled {
                 // 如果没有初始数据，尝试再次通过超时读取
                 if initial_data.is_empty() {
-                    let mut temp_buf = vec![0u8; 4096];
+                    let mut temp_buf = vec![0u8; 16384];
                     if let Ok(Ok(n)) = timeout(Duration::from_millis(500), stream.read(&mut temp_buf)).await {
                          if n > 0 {
                              initial_data.extend_from_slice(&temp_buf[..n]);
