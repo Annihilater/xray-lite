@@ -1,7 +1,50 @@
+use std::sync::Mutex;
+use once_cell::sync::Lazy;
 use anyhow::Result;
 use tokio::net::TcpStream;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, error, info};
+
+const BUFFER_SIZE: usize = 16 * 1024;
+static BUFFER_POOL: Lazy<Mutex<Vec<Vec<u8>>>> = Lazy::new(|| Mutex::new(Vec::with_capacity(256)));
+
+struct PooledBuffer(Option<Vec<u8>>);
+
+impl PooledBuffer {
+    fn get() -> Self {
+        if let Ok(mut pool) = BUFFER_POOL.lock() {
+            if let Some(buf) = pool.pop() {
+                return PooledBuffer(Some(buf));
+            }
+        }
+        PooledBuffer(Some(vec![0u8; BUFFER_SIZE]))
+    }
+}
+
+impl std::ops::Deref for PooledBuffer {
+    type Target = [u8];
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref().unwrap()
+    }
+}
+
+impl std::ops::DerefMut for PooledBuffer {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.as_mut().unwrap()
+    }
+}
+
+impl Drop for PooledBuffer {
+    fn drop(&mut self) {
+        if let Some(buf) = self.0.take() {
+            if let Ok(mut pool) = BUFFER_POOL.lock() {
+                if pool.len() < 512 {
+                    pool.push(buf);
+                }
+            }
+        }
+    }
+}
 
 /// 代理连接
 pub struct ProxyConnection<C, R> {
@@ -24,34 +67,29 @@ where
 
     /// 双向数据转发
     pub async fn relay(mut self) -> Result<()> {
-        debug!("开始双向数据转发");
+        debug!("开始双向数据转发 (已启用内存池)");
 
-        // 优化：自定义双向拷贝，使用 16KB 缓冲区
-        // tokio::io::copy_bidirectional 默认使用 2KB (或 8KB) 缓冲区，较小。
-        // 在大流量下，增加缓冲区可以显著减少 read/write 系统调用次数，降低 CPU 占用并提升吞吐量。
         let (mut c_r, mut c_w) = tokio::io::split(self.client_stream);
         let (mut r_r, mut r_w) = tokio::io::split(self.remote_stream);
 
         let client_to_remote = async {
-            let mut buf = vec![0u8; 16 * 1024]; // 16KB Buffer
+            let mut buf = PooledBuffer::get();
             loop {
                 let n = c_r.read(&mut buf).await?;
                 if n == 0 {
-                    // EOF
                     r_w.shutdown().await?;
                     break;
                 }
                 r_w.write_all(&buf[..n]).await?;
             }
-            Ok::<u64, std::io::Error>(0) // 简化处理，不统计精确字节数以减少开销
+            Ok::<u64, std::io::Error>(0)
         };
 
         let remote_to_client = async {
-            let mut buf = vec![0u8; 16 * 1024]; // 16KB Buffer
+            let mut buf = PooledBuffer::get();
             loop {
                 let n = r_r.read(&mut buf).await?;
                 if n == 0 {
-                    // EOF
                     c_w.shutdown().await?;
                     break;
                 }
