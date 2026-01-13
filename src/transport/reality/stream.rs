@@ -103,9 +103,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin> TlsStream<S> {
                 Err(e) => return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e))),
             };
 
-        let total_len = encrypted_record.len();
-        let mut written_len = 0;
-
         // 2. Write ALL encrypted bytes to underlying stream
         // Note: For strict correctness, we should handle partial writes properly by keeping `encrypted_record` in a separate buffer.
         // However, standard tokio AsyncWrite mostly handles the buffering internally or we assume the socket can take it.

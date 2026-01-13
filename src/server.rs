@@ -307,6 +307,7 @@ impl Server {
 
         Ok(())
     }
+}
 
 /// 带前缀的流 (用于回放 peek 到的数据)
 pub struct PrefixedStream<S> {
@@ -357,4 +358,4 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for PrefixedStream<S> {
         Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 }
-}
+
