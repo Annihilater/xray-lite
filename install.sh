@@ -58,8 +58,8 @@ echo ""
 echo -e "${YELLOW}Checking for existing installation... / 检查现有安装...${NC}"
 if systemctl is-active --quiet xray-lite; then
     echo "Stopping existing xray-lite service... / 停止现有 xray-lite 服务..."
-    systemctl stop xray-lite
-    systemctl disable xray-lite
+    systemctl stop xray-lite >/dev/null 2>&1
+    systemctl disable xray-lite >/dev/null 2>&1
 fi
 
 # Kill any lingering vless-server processes
@@ -86,7 +86,7 @@ DOWNLOAD_PREFIX="https://github.com/${REPO}/releases/download/${VERSION}"
 FALLBACK_PREFIX="https://github.com/${REPO}/releases/download/${VERSION}"
 
 echo "Downloading vless-server..."
-if curl -L -f --progress-bar "${DOWNLOAD_PREFIX}/${XRAY_BINARY}" -o "vless-server"; then
+if curl -fsSL "${DOWNLOAD_PREFIX}/${XRAY_BINARY}" -o "vless-server"; then
     echo -e "${GREEN}✓ vless-server downloaded${NC}"
 else
     echo -e "${RED}Failed to download vless-server${NC}"
@@ -94,7 +94,7 @@ else
 fi
 
 echo "Downloading keygen..."
-if curl -L -f --progress-bar "${DOWNLOAD_PREFIX}/${KEYGEN_BINARY}" -o "keygen"; then
+if curl -fsSL "${DOWNLOAD_PREFIX}/${KEYGEN_BINARY}" -o "keygen"; then
     echo -e "${GREEN}✓ keygen downloaded${NC}"
 else
     echo -e "${RED}Failed to download keygen${NC}"
@@ -309,7 +309,7 @@ Wants=network.target
 Type=simple
 User=root
 Group=root
-Environment=RUST_LOG=debug
+Environment=RUST_LOG=info
 WorkingDirectory=$INSTALL_DIR
 ExecStart=$INSTALL_DIR/vless-server --config $INSTALL_DIR/config.json
 Restart=on-failure
@@ -326,8 +326,8 @@ SyslogIdentifier=xray-lite
 WantedBy=multi-user.target
 EOF
 
-systemctl daemon-reload
-systemctl enable xray-lite
+systemctl daemon-reload >/dev/null 2>&1
+systemctl enable xray-lite >/dev/null 2>&1
 echo -e "${GREEN}✓ Service installed / 服务已安装${NC}"
 echo ""
 
@@ -346,8 +346,8 @@ if command -v ufw &> /dev/null; then
         echo -e "${YELLOW}⚠ ufw is installed but not active / ufw 已安装但未启用${NC}"
     fi
 elif command -v firewall-cmd &> /dev/null; then
-    firewall-cmd --permanent --add-port=${PORT}/tcp
-    firewall-cmd --reload
+    firewall-cmd --permanent --add-port=${PORT}/tcp >/dev/null 2>&1
+    firewall-cmd --reload >/dev/null 2>&1
     echo -e "${GREEN}✓ Firewall configured (firewalld) / 防火墙已配置 (firewalld)${NC}"
 else
     echo -e "${YELLOW}⚠ No firewall detected, please open port $PORT manually${NC}"
