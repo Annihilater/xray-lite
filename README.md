@@ -24,7 +24,9 @@ A lightweight, high-performance VLESS + Reality proxy server implemented in pure
 | **VLESS UDP** | ✅ Stable | UDP over TCP support / UDP over TCP 支持 |
 | **Reality** | ✅ Stable | TLS 1.3 with dynamic certificate / TLS 1.3 动态证书 |
 | **SNI Sniffing** | ✅ Stable | Auto-detect target domain / 自动嗅探目标域名 |
-| **H2 Ping-Pong** | ✅ New | Server-side random heartbeat noise (Anti-Censorship) / 服务端随机心跳噪声（抗封锁） |
+| **<span style="color:red">H2 Ping-Pong</span>** | ✅ New | Server-side random heartbeat noise (Anti-Censorship) / 服务端随机心跳噪声（抗封锁） |
+| **<span style="color:red">Traffic Shaping</span>** | ✅ Stealth | Randomizes packet sizes to defeat ML detection / 动态流量整形，对抗机器学习识别 |
+| **<span style="color:red">Chameleon Headers</span>**| ✅ Stealth | Mimics Nginx server responses perfectly / 拟态伪装，完美模拟 Nginx 响应头 |
 | **XHTTP (NEW)** | ✅ Universal | Universal compatibility (PC, iOS, Android) / 全端完美适配 (PC, iOS, 安卓) |
 
 ### Why Xray-Lite? / 为什么选择 Xray-Lite？
@@ -147,13 +149,13 @@ Xray-Lite features a **Universal Adaptive Engine (UAE)** for XHTTP:
 *   **PC/Desktop**: Higher performance H2-Pipe mode.
 *   **iOS/Mobile**: Intelligent Session Pairing for XHTTP Split-Streams.
 *   **Auto-Sync**: Standard gRPC Framing automatically detected.
-*   **Anti-Censorship**: **H2 Ping-Pong** generates random bi-directional noise to defeat traffic analysis.
+*   **Anti-Censorship**: **<span style="color:red">H2 Ping-Pong</span>**, **<span style="color:red">Traffic Shaping</span>**, and **<span style="color:red">Chameleon Headers</span>** combine to defeat deep packet inspection and traffic analysis.
 
 Xray-Lite 拥有针对 XHTTP 的 **全协议自适应引擎 (UAE)**:
 *   **电脑端**: 采用极速 H2-Pipe 直传。
 *   **移动端**: 自动识别并焊接 XHTTP 分离流（解决小火箭掉线问题）。
 *   **自动同步**: 自动识别标准 gRPC 分帧逻辑。
-*   **抗封锁**: **H2 Ping-Pong** 机制产生随机双向噪声，干扰流量分析。
+*   **抗封锁**: **<span style="color:red">H2 Ping-Pong</span>** (随机心跳), **<span style="color:red">Traffic Shaping</span>** (流量整形), **<span style="color:red">Chameleon Headers</span>** (拟态伪装) 三位一体，对抗深度包检测与流量分析。
 
 ---
 
