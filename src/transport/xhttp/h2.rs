@@ -23,6 +23,14 @@ static SESSIONS: Lazy<Arc<Mutex<HashMap<String, Session>>>> = Lazy::new(|| {
     Arc::new(Mutex::new(HashMap::new()))
 });
 
+/// Helper to safely acquire SESSIONS lock, handling poisoning
+fn lock_sessions() -> std::sync::MutexGuard<'static, HashMap<String, Session>> {
+    SESSIONS.lock().unwrap_or_else(|e| {
+        warn!("CRITICAL: SESSIONS lock poisoned! Recovering state...");
+        e.into_inner()
+    })
+}
+
 /// 终极 H2/XHTTP 处理器 (v0.2.74: 带全域静默 Padding)
 #[derive(Clone)]
 pub struct H2Handler {
@@ -108,7 +116,7 @@ impl H2Handler {
             if !is_pc {
                 for _ in 0..10 {
                     let found = {
-                        let sessions = SESSIONS.lock().unwrap();
+                        let sessions = lock_sessions();
                         sessions.contains_key(&path)
                     };
                     if found { break; }
@@ -117,7 +125,7 @@ impl H2Handler {
             }
 
             let session_tx = {
-                let sessions = SESSIONS.lock().unwrap();
+                let sessions = lock_sessions();
                 sessions.get(&path).map(|s| s.to_vless_tx.clone())
             };
 
@@ -233,7 +241,7 @@ impl H2Handler {
         let (to_vless_tx, mut to_vless_rx) = mpsc::unbounded_channel::<Bytes>();
         let notify = Arc::new(Notify::new());
         {
-            let mut sessions = SESSIONS.lock().unwrap();
+            let mut sessions = lock_sessions();
             sessions.insert(path.clone(), Session { to_vless_tx, notify: notify.clone() });
         }
 
@@ -277,7 +285,7 @@ impl H2Handler {
         let _ = downstream.await;
         
         {
-            let mut sessions = SESSIONS.lock().unwrap();
+            let mut sessions = lock_sessions();
             sessions.remove(&path);
         }
         notify.notify_waiters();
