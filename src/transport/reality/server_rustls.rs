@@ -53,7 +53,8 @@ impl RealityServerRustls {
         })
     }
 
-    pub async fn accept(&self, mut stream: TcpStream) -> Result<tokio_rustls::server::TlsStream<PrefixedStream<TcpStream>>> {
+    pub async fn accept<S>(&self, mut stream: S) -> Result<tokio_rustls::server::TlsStream<PrefixedStream<S>>> 
+    where S: AsyncRead + AsyncWrite + Unpin + Send + 'static {
         let mut buffer = Vec::with_capacity(2048);
         while buffer.len() < 5 {
             let mut chunk = [0u8; 1024];
@@ -190,7 +191,8 @@ impl RealityServerRustls {
         Ok((CertificateDer::from(cert_der), PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(priv_key_der))))
     }
 
-    async fn fallback(&self, mut stream: TcpStream, prefix: &[u8], dest: &str) -> Result<()> {
+    async fn fallback<S>(&self, mut stream: S, prefix: &[u8], dest: &str) -> Result<()> 
+    where S: AsyncRead + AsyncWrite + Unpin + Send + 'static {
         let mut dest_stream = TcpStream::connect(dest).await?;
         dest_stream.write_all(prefix).await?;
         tokio::io::copy_bidirectional(&mut stream, &mut dest_stream).await?;

@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use tokio::net::TcpStream;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::{debug, info};
 use base64::{Engine as _, engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD}};
 
@@ -48,7 +48,8 @@ impl RealityServer {
     }
 
     /// 处理传入的 TLS 连接
-    pub async fn accept(&self, stream: TcpStream) -> Result<tokio_rustls::server::TlsStream<super::server_rustls::PrefixedStream<TcpStream>>> {
+    pub async fn accept<S>(&self, stream: S) -> Result<tokio_rustls::server::TlsStream<super::server_rustls::PrefixedStream<S>>> 
+    where S: AsyncRead + AsyncWrite + Unpin + Send + 'static {
         // 使用 Sniff-and-Dispatch 逻辑
         self.inner.accept(stream).await
     }

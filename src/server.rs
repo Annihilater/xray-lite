@@ -1,6 +1,9 @@
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use tokio::io::{ReadBuf, AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
+use bytes::Buf;
 use anyhow::Result;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{error, info, warn, debug};
 use uuid::Uuid;
 
@@ -232,7 +235,7 @@ impl Server {
         accept_proxy_protocol: bool,
     ) -> Result<()> {
         // 如果启用 Proxy Protocol，先解析获取真实客户端 IP
-        let _real_client_addr = if accept_proxy_protocol {
+        let (stream, _real_client_addr): (Box<dyn AsyncStream>, Option<std::net::SocketAddr>) = if accept_proxy_protocol {
             use tokio::io::AsyncReadExt;
             let mut pp_buf = [0u8; 512];
             
@@ -245,31 +248,41 @@ impl Server {
                         stream.read_exact(&mut read_buf).await?;
                         
                         match crate::protocol::parse_proxy_protocol(&read_buf) {
-                            Ok((header, _consumed)) => {
+                            Ok((header, consumed)) => {
                                 info!("📡 Proxy Protocol: 真实客户端 IP = {}", header.source_addr);
-                                Some(header.source_addr)
+                                // FIX: Handle remaining bytes (e.g. part of ClientHello)
+                                let remaining = read_buf[consumed..].to_vec();
+                                let wrapped_stream: Box<dyn AsyncStream> = if !remaining.is_empty() {
+                                    Box::new(PrefixedStream::new(remaining, stream))
+                                } else {
+                                    Box::new(stream)
+                                };
+                                (wrapped_stream, Some(header.source_addr))
                             }
                             Err(e) => {
                                 warn!("Proxy Protocol 解析失败: {}", e);
-                                None
+                                // 解析失败，假设不是 PP，回退到原始流
+                                let wrapped_stream = Box::new(PrefixedStream::new(read_buf, stream));
+                                (wrapped_stream, None)
                             }
                         }
                     } else {
-                        None
+                        (Box::new(stream), None)
                     }
                 }
-                _ => None,
+                _ => (Box::new(stream), None),
             }
         } else {
-            None
+            (Box::new(stream), None)
         };
 
         // 如果配置了 Reality，执行握手
         let stream: Box<dyn AsyncStream> = if let Some(reality) = reality_server {
+            // Accept generic S
             let tls_stream = reality.accept(stream).await?;
             Box::new(tls_stream)
         } else {
-            Box::new(stream)
+            stream
         };
 
         // 定义 VLESS 处理回调
@@ -294,4 +307,54 @@ impl Server {
 
         Ok(())
     }
+
+/// 带前缀的流 (用于回放 peek 到的数据)
+pub struct PrefixedStream<S> {
+    prefix: std::io::Cursor<Vec<u8>>,
+    inner: S,
+}
+
+impl<S> PrefixedStream<S> {
+    pub fn new(prefix: Vec<u8>, inner: S) -> Self {
+        Self {
+            prefix: std::io::Cursor::new(prefix),
+            inner,
+        }
+    }
+}
+
+impl<S: AsyncRead + Unpin> AsyncRead for PrefixedStream<S> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        if self.prefix.has_remaining() {
+            let n = std::cmp::min(buf.remaining(), self.prefix.remaining());
+            let pos = self.prefix.position() as usize;
+            buf.put_slice(&self.prefix.get_ref()[pos..pos + n]);
+            self.prefix.set_position((pos + n) as u64);
+            return Poll::Ready(Ok(()));
+        }
+        Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl<S: AsyncWrite + Unpin> AsyncWrite for PrefixedStream<S> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
 }
