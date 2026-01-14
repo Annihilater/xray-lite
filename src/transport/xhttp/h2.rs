@@ -25,7 +25,7 @@ static SESSIONS: Lazy<Arc<DashMap<String, Session>>> = Lazy::new(|| {
     Arc::new(DashMap::new())
 });
 
-/// 终极 H2/XHTTP 处理器 (v0.2.100: gRPC Framing Fix)
+/// 终极 H2/XHTTP 处理器 (v0.4.3: 流量特征优化版)
 #[derive(Clone)]
 pub struct H2Handler {
     config: XhttpConfig,
@@ -46,12 +46,46 @@ impl H2Handler {
             .collect()
     }
 
-    /// 智能分片发送
+    /// v0.4.3: 生成伪装的请求 ID (模拟 CDN/反代)
+    fn gen_request_id() -> String {
+        let mut rng = rand::thread_rng();
+        format!("{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+            rng.gen::<u32>(),
+            rng.gen::<u16>(),
+            rng.gen::<u16>(),
+            rng.gen::<u16>(),
+            rng.gen::<u64>() & 0xFFFFFFFFFFFF
+        )
+    }
+
+    /// v0.4.3: 生成伪装的缓存状态
+    fn gen_cache_status() -> &'static str {
+        let mut rng = rand::thread_rng();
+        match rng.gen_range(0..10) {
+            0..=3 => "HIT",
+            4..=6 => "MISS",
+            7..=8 => "BYPASS",
+            _ => "DYNAMIC",
+        }
+    }
+
+    /// v0.4.3: 智能分片发送 - 模拟真实网页流量分布
     fn send_split_data(src: &mut BytesMut, send_stream: &mut SendStream<Bytes>) -> Result<()> {
         let mut rng = rand::thread_rng();
         
         while src.has_remaining() {
-            let chunk_size = rng.gen_range(1024..4096);
+            let chunk_size = {
+                let r: f64 = rng.gen();
+                if r < 0.35 {
+                    rng.gen_range(128..512)      // 35% 小包
+                } else if r < 0.70 {
+                    rng.gen_range(512..2048)     // 35% 中包
+                } else if r < 0.90 {
+                    rng.gen_range(2048..8192)    // 20% 大包
+                } else {
+                    rng.gen_range(8192..16384)   // 10% 超大包
+                }
+            };
             let split_len = std::cmp::min(src.len(), chunk_size);
             let chunk = src.split_to(split_len).freeze();
             send_stream.send_data(chunk, false)?;
@@ -180,6 +214,8 @@ impl H2Handler {
             .status(StatusCode::OK)
             .header("content-type", "application/octet-stream")
             .header("server", "nginx/1.26.0")
+            .header("x-request-id", Self::gen_request_id())
+            .header("x-cache", Self::gen_cache_status())
             .header("x-padding", Self::gen_padding())
             .body(())
             .unwrap();
@@ -320,6 +356,8 @@ impl H2Handler {
             .status(StatusCode::OK)
             .header("content-type", "application/octet-stream")
             .header("server", "nginx/1.26.0")
+            .header("x-request-id", Self::gen_request_id())
+            .header("x-cache", Self::gen_cache_status())
             .header("x-padding", Self::gen_padding())
             .body(())
             .unwrap();
@@ -374,6 +412,8 @@ impl H2Handler {
         let response = Response::builder()
             .status(StatusCode::OK)
             .header("server", "nginx/1.26.0")
+            .header("x-request-id", Self::gen_request_id())
+            .header("x-cache", Self::gen_cache_status())
             .header("x-padding", Self::gen_padding())
             .body(())
             .unwrap();

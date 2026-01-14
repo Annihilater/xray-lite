@@ -19,7 +19,7 @@ use crate::server::Server;
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 #[derive(Parser, Debug)]
-#[command(author, version = "0.4.2", about, long_about = None)]
+#[command(author, version = "0.4.3", about, long_about = None)]
 struct Args {
     /// 配置文件路径
     #[arg(short, long, default_value = "config.json")]
