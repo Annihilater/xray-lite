@@ -26,7 +26,7 @@ static SESSIONS: Lazy<Arc<DashMap<String, Session>>> = Lazy::new(|| {
     Arc::new(DashMap::new())
 });
 
-/// 终极 H2/XHTTP 处理器 (v0.3.4: 移动端/高并发优化版)
+/// 终极 H2/XHTTP 处理器 (v0.3.5: 性能与轻量平衡版)
 #[derive(Clone)]
 pub struct H2Handler {
     config: XhttpConfig,
@@ -53,9 +53,9 @@ impl H2Handler {
         let mut rng = rand::thread_rng();
         
         while src.has_remaining() {
-            // 移动端优化：随机切片大小 2048B - 8192B
-            // 较大的切片能显著提升图片/视频流的加载速度，同时保留基础的拟态混淆
-            let chunk_size = rng.gen_range(2048..8192);
+            // 均衡优化：随机切片大小 1024B - 4096B
+            // 在保持轻量级内存占用的同时，确保推特头像和视频的高速吞吐
+            let chunk_size = rng.gen_range(1024..4096);
             let split_len = std::cmp::min(src.len(), chunk_size);
             
             // split_to 会消耗 src 前面的字节，返回新的 Bytes (Zero-copy)
@@ -71,13 +71,13 @@ impl H2Handler {
         F: Fn(Box<dyn crate::server::AsyncStream>) -> Fut + Clone + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<()>> + Send + 'static,
     {
-        debug!("XHTTP: 启动 V34 拟态防御引擎 (Mobile Optimized + Traffic Shaping)");
+        debug!("XHTTP: 启动 V35 拟态防御引擎 (Balanced Performance + Adaptive Memory)");
 
         let mut builder = server::Builder::new();
         builder
-            .initial_window_size(8388608)    // 8MB 窗口 (针对手机 App 高并发优化)
-            .initial_connection_window_size(16777216) // 16MB 连接窗口
-            .max_concurrent_streams(1000)    // 提升并发限制
+            .initial_window_size(4194304)    // 4MB 窗口 (平衡性能与内存的核心参数)
+            .initial_connection_window_size(8388608) // 8MB 连接窗口
+            .max_concurrent_streams(500)     // 回归 500 并发，保持极致轻量
             .max_frame_size(16384);
 
         let mut connection = builder.handshake(stream).await?;
