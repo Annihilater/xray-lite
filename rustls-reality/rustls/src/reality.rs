@@ -67,8 +67,6 @@ pub fn inject_auth(
     // Inject first 12 bytes of HMAC into server_random[20..32]
     server_random[20..32].copy_from_slice(&tag.as_ref()[0..12]);
 
-    std::eprintln!("REALITY_V10_SIGN_DONE");
-
     Ok(())
 }
 

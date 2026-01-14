@@ -223,7 +223,6 @@ impl RealityServerRustls {
             cache.put(key, (cert_der.clone(), priv_key_der.clone()));
         }
 
-        std::eprintln!("REALITY_STDERR: Generated dynamic cert successfully (New).");
 
         let result_cert = CertificateDer::from(cert_der);
         let result_key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(priv_key_der));

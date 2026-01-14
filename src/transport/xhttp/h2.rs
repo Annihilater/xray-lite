@@ -201,8 +201,6 @@ impl H2Handler {
             .status(StatusCode::OK)
             .header("content-type", "application/octet-stream")
             .header("server", "nginx/1.26.0")
-            .header("connection", "keep-alive")
-            .header("keep-alive", "timeout=120")
             .header("cache-control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0")
             .header("x-padding", Self::gen_padding()) // 注入动态填充
             .body(())
