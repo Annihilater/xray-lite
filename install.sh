@@ -1,14 +1,5 @@
 #!/bin/bash
-
-# Xray-Lite One-Click Installation Script
-# Xray-Lite 一键安装脚本
-# 
-# Usage / 用法:
-#   curl -fsSL https://raw.githubusercontent.com/undead-undead/xray-lite/main/install.sh | bash
-#
-# Or / 或者:
-#   wget -qO- https://raw.githubusercontent.com/undead-undead/xray-lite/main/install.sh | bash
-
+# wget -qO- https://raw.githubusercontent.com/undead-undead/xray-lite/main/install.sh | bash
 set -e
 
 # Color definitions / 颜色定义
@@ -19,7 +10,7 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Version / 版本
-VERSION="v0.4.2"
+VERSION="v0.2.100"
 REPO="undead-undead/xray-lite"
 
 echo -e "${BLUE}=========================================${NC}"
@@ -75,7 +66,6 @@ cd $INSTALL_DIR
 echo -e "${GREEN}✓ Directory created / 目录已创建: $INSTALL_DIR${NC}"
 echo ""
 
-# Download binary / 下载二进制文件
 # Download Static Binaries / 下载静态二进制文件
 echo -e "${YELLOW}[2/6] Downloading Xray-Lite binaries... / 下载 Xray-Lite 二进制文件...${NC}"
 
@@ -106,7 +96,7 @@ echo -e "${GREEN}✓ Files prepared / 文件已准备就绪${NC}"
 echo ""
 
 # Generate configuration / 生成配置
-echo -e "${YELLOW}[4/6] Generating configuration... / 生成配置...${NC}"
+echo -e "${YELLOW}[3/6] Generating configuration... / 生成配置...${NC}"
 
 # Generate keys / 生成密钥
 KEYGEN_OUTPUT=$(./keygen)
@@ -151,273 +141,189 @@ else
 fi
 
 # XHTTP configuration / XHTTP 配置
-ENABLE_XHTTP="n"
-NETWORK_TYPE="tcp"
-XHTTP_MODE="auto"
-XHTTP_PATH="/"
+# Default to true, as it's a key feature
+ENABLE_XHTTP="y" 
 
-if [ -t 0 ]; then
-    echo ""
-    echo -e "${YELLOW}XHTTP provides additional obfuscation via HTTP/2${NC}"
-    echo -e "${YELLOW}XHTTP 通过 HTTP/2 提供额外的混淆${NC}"
-    read -p "Enable XHTTP? / 启用 XHTTP? (y/N): " XHTTP_INPUT
-    ENABLE_XHTTP=$(echo "${XHTTP_INPUT:-n}" | tr '[:upper:]' '[:lower:]')
-    
-    if [ "$ENABLE_XHTTP" = "y" ]; then
-        NETWORK_TYPE="http"
-        XHTTP_MODE="auto"
-        
-        echo ""
-        read -p "XHTTP path / XHTTP 路径 [/]: " PATH_INPUT
-        XHTTP_PATH=${PATH_INPUT:-/}
-        # Auto-prepend / if missing
-        if [[ "$XHTTP_PATH" != /* ]]; then
-            XHTTP_PATH="/$XHTTP_PATH"
-        fi
-        
-        read -p "XHTTP host / XHTTP 域名 (Optional/可选) []: " HOST_INPUT
-        XHTTP_HOST=${HOST_INPUT}
-
-        echo -e "${GREEN}✓ XHTTP enabled / XHTTP 已启用${NC}"
-        echo "  Mode: Intelligent Adaptive (Integrated) / 智能自适应"
-        echo "  Path / 路径: $XHTTP_PATH"
-        echo "  Host / 域名: ${XHTTP_HOST:-*(Any)}"
+if [ "$ENABLE_XHTTP" = "y" ] || [ "$ENABLE_XHTTP" = "Y" ]; then
+    echo -e "${GREEN}XHTTP (Anti-probing) enabled / XHTTP (防探测) 已启用${NC}"
+    if [ -t 0 ]; then
+        read -p "XHTTP path / XHTTP 路径 [/xhttp]: " XHTTP_PATH_INPUT
+        XHTTP_PATH=${XHTTP_PATH_INPUT:-/xhttp}
     else
-        echo -e "${GREEN}✓ Using TCP (default) / 使用 TCP (默认)${NC}"
+        XHTTP_PATH="/xhttp"
     fi
-fi
-
-# Create server configuration with conditional XHTTP
-# Build XHTTP settings if enabled
-if [ "$ENABLE_XHTTP" = "y" ]; then
-    XHTTP_SETTINGS=",
-        \"xhttpSettings\": {
-          \"mode\": \"$XHTTP_MODE\",
-          \"path\": \"$XHTTP_PATH\",
-          \"host\": \"$XHTTP_HOST\"
-        }"
 else
-    XHTTP_SETTINGS=""
+    XHTTP_PATH=""
+    echo -e "${YELLOW}XHTTP disabled (Standard VLESS+Reality) / XHTTP 已禁用 (标准 VLESS+Reality)${NC}"
 fi
 
-cat > config.json << EOF
+# Build XHTTP settings if enabled
+XHTTP_CONFIG=""
+if [ -n "$XHTTP_PATH" ]; then
+    XHTTP_CONFIG="\"xhttp\": {
+    \"mode\": \"auto\",
+    \"path\": \"$XHTTP_PATH\",
+    \"extra\": {}
+  },"
+fi
+
+echo -e "${YELLOW}[4/6] Creating config.json... / 创建配置文件...${NC}"
+
+cat <<EOF > config.json
 {
   "log": {
-    "loglevel": "info"
+    "level": "info"
   },
   "inbounds": [
     {
-      "listen": "0.0.0.0",
       "port": $PORT,
       "protocol": "vless",
       "settings": {
         "clients": [
           {
             "id": "$CLIENT_UUID",
-            "flow": "",
-            "email": "user@example.com"
+            "flow": "xtls-rprx-vision"
           }
         ],
         "decryption": "none"
       },
       "streamSettings": {
-        "network": "$NETWORK_TYPE",
+        "network": "tcp",
         "security": "reality",
         "realitySettings": {
           "show": false,
           "dest": "$DEST",
           "xver": 0,
           "serverNames": [
-            "$DOMAIN",
-            "*.$DOMAIN"
+            "$DOMAIN"
           ],
           "privateKey": "$PRIVATE_KEY",
-          "publicKey": "$PUBLIC_KEY",
-          "shortIds": ["$SHORT_ID"],
-          "fingerprint": "chrome"
-        }$XHTTP_SETTINGS
+          "shortIds": [
+            "$SHORT_ID"
+          ]
+        },
+        $XHTTP_CONFIG
+        "tcpSettings": {
+          "acceptProxyProtocol": false,
+          "header": {
+            "type": "none"
+          }
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic"
+        ]
       }
     }
   ],
-  "outbounds": [{
-    "protocol": "freedom",
-    "tag": "direct"
-  }],
-  "routing": {
-    "rules": []
-  }
-}
-EOF
-
-# Create client configuration
-cat > client-config.json << EOF
-{
-  "log": {"loglevel": "info"},
-  "inbounds": [{
-    "port": 1080,
-    "listen": "127.0.0.1",
-    "protocol": "socks",
-    "settings": {"udp": true}
-  }],
-  "outbounds": [{
-    "protocol": "vless",
-    "settings": {
-      "vnext": [{
-        "address": "$SERVER_IP",
-        "port": $PORT,
-        "users": [{
-          "id": "$CLIENT_UUID",
-          "encryption": "none",
-          "flow": ""
-        }]
-      }]
+  "outbounds": [
+    {
+      "protocol": "freedom",
+      "tag": "direct"
     },
-    "streamSettings": {
-      "network": "tcp",
-      "security": "reality",
-      "realitySettings": {
-        "show": false,
-        "fingerprint": "chrome",
-        "serverName": "$DOMAIN",
-        "publicKey": "$PUBLIC_KEY",
-        "shortId": "$SHORT_ID",
-        "spiderX": "/"
-      }
+    {
+      "protocol": "blackhole",
+      "tag": "block"
     }
-  }]
+  ]
 }
 EOF
 
-# Set permissions
-echo -e "${YELLOW}Setting permissions... / 设置权限...${NC}"
-chown -R nobody:nogroup $INSTALL_DIR
-chmod 755 $INSTALL_DIR
-chmod 644 $INSTALL_DIR/config.json
-chmod 755 $INSTALL_DIR/vless-server
+# Create client configuration / 创建客户端配置
+echo -e "${YELLOW}[5/6] Creating client configuration... / 创建客户端配置...${NC}"
 
-# Install systemd service
-echo -e "${YELLOW}[5/6] Installing systemd service... / 安装 systemd 服务...${NC}"
+# Start service to test
+echo -e "${YELLOW}[6/6] Installing service... / 安装服务...${NC}"
 
-cat > /etc/systemd/system/xray-lite.service << EOF
+cat <<EOF > /etc/systemd/system/xray-lite.service
 [Unit]
-Description=Xray-Lite VLESS Reality Server
-After=network.target
-Wants=network.target
+Description=Xray-Lite Service
+Documentation=https://github.com/$REPO
+After=network.target nss-lookup.target
 
 [Service]
-Type=simple
 User=root
-Group=root
-Environment=RUST_LOG=info
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/vless-server --config $INSTALL_DIR/config.json
+ExecStart=$INSTALL_DIR/vless-server -c config.json
 Restart=on-failure
-RestartSec=10s
-
-LimitNOFILE=1000000
-LimitNPROC=512
-
-SyslogIdentifier=xray-lite
-StandardOutput=null
-StandardError=journal
+RestartSec=10
+LimitNOFILE=infinity
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-systemctl daemon-reload >/dev/null 2>&1
-systemctl enable xray-lite >/dev/null 2>&1
-echo -e "${GREEN}✓ Service installed / 服务已安装${NC}"
-echo ""
+# Set permissions
+chmod 644 /etc/systemd/system/xray-lite.service
+chmod 755 $INSTALL_DIR/vless-server
+chmod 755 $INSTALL_DIR/keygen
 
-# Configure firewall
-echo -e "${YELLOW}[6/6] Configuring firewall... / 配置防火墙...${NC}"
+systemctl daemon-reload
+systemctl enable xray-lite
+
+# Configure firewall / 配置防火墙
+if command -v ufw &> /dev/null; then
+    if ufw status | grep -q "Status: active"; then
+        echo "Opening port $PORT in UFW..."
+        ufw allow $PORT/tcp
+    fi
+fi
+
 # Ensure PORT is numeric again just in case
 if [[ ! "$PORT" =~ ^[0-9]+$ ]]; then
     PORT=443
 fi
 
-if command -v ufw &> /dev/null; then
-    if ufw status | grep -q "Status: active"; then
-        ufw allow $PORT/tcp
-        echo -e "${GREEN}✓ Firewall configured (ufw) / 防火墙已配置 (ufw)${NC}"
+# Check port availability / 检查端口占用
+if lsof -i:$PORT -t >/dev/null 2>&1; then
+    echo -e "${RED}Warning: Port $PORT is in use. Service might fail to start.${NC}"
+    echo -e "${RED}警告: 端口 $PORT 已被占用，服务可能启动失败。${NC}"
+else
+    # Start service
+    systemctl start xray-lite
+    if systemctl is-active --quiet xray-lite; then
+        echo -e "${GREEN}✓ Service started successfully / 服务启动成功${NC}"
     else
-        echo -e "${YELLOW}⚠ ufw is installed but not active / ufw 已安装但未启用${NC}"
+        echo -e "${RED}Service failed to start. Check logs with: journalctl -u xray-lite -f${NC}"
+        echo -e "${RED}服务启动失败。请使用 journalctl -u xray-lite -f 查看日志${NC}"
     fi
-elif command -v firewall-cmd &> /dev/null; then
-    firewall-cmd --permanent --add-port=${PORT}/tcp >/dev/null 2>&1
-    firewall-cmd --reload >/dev/null 2>&1
-    echo -e "${GREEN}✓ Firewall configured (firewalld) / 防火墙已配置 (firewalld)${NC}"
+fi
+
+echo ""
+echo -e "${BLUE}=========================================${NC}"
+echo -e "${GREEN}Installation Completed / 安装完成${NC}"
+echo -e "${BLUE}=========================================${NC}"
+echo ""
+echo -e "Server IP    : ${YELLOW}$SERVER_IP${NC}"
+echo -e "Port         : ${YELLOW}$PORT${NC}"
+echo -e "UUID         : ${YELLOW}$CLIENT_UUID${NC}"
+echo -e "Flow         : ${YELLOW}xtls-rprx-vision${NC}"
+echo -e "Encryption   : ${YELLOW}none${NC}"
+echo -e "Network      : ${YELLOW}tcp${NC}"
+echo -e "Security     : ${YELLOW}reality${NC}"
+echo -e "Public Key   : ${YELLOW}$PUBLIC_KEY${NC}"
+echo -e "Short ID     : ${YELLOW}$SHORT_ID${NC}"
+echo -e "Sni          : ${YELLOW}$DOMAIN${NC}"
+if [ -n "$XHTTP_PATH" ]; then
+    echo -e "XHTTP Path   : ${YELLOW}$XHTTP_PATH${NC}"
+    echo -e "XHTTP Mode   : ${YELLOW}auto${NC}"
+    
+    # Generate VLESS Link with XHTTP
+    VLESS_LINK="vless://${CLIENT_UUID}@${SERVER_IP}:${PORT}?security=reality&encryption=none&pbk=${PUBLIC_KEY}&fp=chrome&type=tcp&sni=${DOMAIN}&sid=${SHORT_ID}&spx=${XHTTP_PATH}#Xray-Lite-XHTTP"
 else
-    echo -e "${YELLOW}⚠ No firewall detected, please open port $PORT manually${NC}"
-    echo -e "${YELLOW}⚠ 未检测到防火墙，请手动开放端口 $PORT${NC}"
-fi
-echo ""
-
-# Check port availability
-if lsof -i:$PORT -t >/dev/null 2>&1 ; then
-    echo "Port $PORT is in use, attempting to clean up... / 端口 $PORT 被占用，尝试清理..."
-    systemctl stop xray-lite >/dev/null 2>&1 || true
-    pkill -f vless-server || true
-    sleep 2
+    # Standard VLESS Link
+    VLESS_LINK="vless://${CLIENT_UUID}@${SERVER_IP}:${PORT}?security=reality&encryption=none&pbk=${PUBLIC_KEY}&fp=chrome&type=tcp&sni=${DOMAIN}&sid=${SHORT_ID}#Xray-Lite-Reality"
 fi
 
-if lsof -i:$PORT -t >/dev/null 2>&1 ; then
-    echo -e "${RED}Error: Port $PORT is already in use! / 错误: 端口 $PORT 已被占用!${NC}"
-    exit 1
-fi
-if ss -tuln | grep -q ":$PORT " ; then
-    echo -e "${RED}Error: Port $PORT is already in use! / 错误: 端口 $PORT 已被占用!${NC}"
-    exit 1
-fi
-
-# Start service
-echo -e "${YELLOW}Starting Xray-Lite service... / 启动 Xray-Lite 服务...${NC}"
-systemctl start xray-lite
-sleep 2
-
-if systemctl is-active --quiet xray-lite; then
-    echo -e "${GREEN}✓ Service started successfully / 服务启动成功${NC}"
-else
-    echo -e "${RED}✗ Service failed to start / 服务启动失败${NC}"
-    echo -e "${YELLOW}=== Error Logs / 错误日志 ===${NC}"
-    journalctl -u xray-lite -n 20 --no-pager
-    echo -e "${YELLOW}=============================${NC}"
-    exit 1
-fi
 echo ""
-
-# Display summary
-echo -e "${GREEN}=========================================${NC}"
-echo -e "${GREEN}  Installation Complete! / 安装完成！${NC}"
-echo -e "${GREEN}=========================================${NC}"
+echo -e "${BLUE}--- VLESS Link / VLESS 链接 ---${NC}"
+echo -e "${GREEN}$VLESS_LINK${NC}"
+echo -e "${BLUE}-------------------------------${NC}"
 echo ""
-echo -e "${BLUE}Server Information / 服务器信息:${NC}"
-echo "  IP: $SERVER_IP"
-echo "  Port / 端口: $PORT"
-echo "  UUID: $CLIENT_UUID"
-echo "  Public Key / 公钥: $PUBLIC_KEY"
-echo "  Short ID / 短 ID: $SHORT_ID"
-echo ""
-echo -e "${BLUE}Client Configuration / 客户端配置:${NC}"
-echo "  Configuration file / 配置文件: $INSTALL_DIR/client-config.json"
-echo "  Download / 下载: scp root@$SERVER_IP:$INSTALL_DIR/client-config.json ."
-echo ""
-echo -e "${BLUE}Service Management / 服务管理:${NC}"
-echo "  Start / 启动:   systemctl start xray-lite"
-echo "  Stop / 停止:    systemctl stop xray-lite"
-echo "  Restart / 重启: systemctl restart xray-lite"
-echo "  Status / 状态:  systemctl status xray-lite"
-echo "  Logs / 日志:    journalctl -u xray-lite -f"
-echo ""
-echo -e "${BLUE}Uninstall / 卸载:${NC}"
-echo "  systemctl stop xray-lite"
-echo "  systemctl disable xray-lite"
-echo "  rm -rf $INSTALL_DIR"
-echo "  rm /etc/systemd/system/xray-lite.service"
-echo ""
-echo -e "${YELLOW}Next Steps / 下一步:${NC}"
-echo "  1. Download client configuration / 下载客户端配置"
-echo "  2. Import into Xray client / 导入到 Xray 客户端"
-echo "  3. Connect and enjoy! / 连接并享受！"
+echo -e "Config file: $INSTALL_DIR/config.json"
+echo -e "Service: systemctl status xray-lite"
 echo ""
