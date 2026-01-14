@@ -5,7 +5,7 @@ use h2::SendStream;
 use hyper::http::{Request, Response, StatusCode};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{mpsc, Notify};
-use tracing::{debug, warn, error, trace};
+use tracing::{debug, info, warn, error, trace};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -25,7 +25,7 @@ static SESSIONS: Lazy<Arc<DashMap<String, Session>>> = Lazy::new(|| {
     Arc::new(DashMap::new())
 });
 
-/// 终极 H2/XHTTP 处理器 (v0.4.0: 逻辑修复与架构加固版)
+/// 终极 H2/XHTTP 处理器 (v0.4.1: 编译修复与告警清理版)
 #[derive(Clone)]
 pub struct H2Handler {
     config: XhttpConfig,
@@ -70,7 +70,7 @@ impl H2Handler {
         F: Fn(Box<dyn crate::server::AsyncStream>) -> Fut + Clone + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<()>> + Send + 'static,
     {
-        info!("XHTTP: 启动 V39 拟态防御引擎 (Balanced Performance + Adaptive Memory)");
+        info!("XHTTP: 启动 V41 拟态防御引擎 (Balanced Performance + Adaptive Memory)");
 
         let mut builder = server::Builder::new();
         builder

@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Result};
-use tokio::net::TcpStream;
 use tracing::{debug, info};
 
 use super::{XhttpConfig, H2Handler, XhttpMode};

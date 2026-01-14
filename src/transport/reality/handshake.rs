@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use bytes::{BytesMut, Buf, BufMut};
+use bytes::{BytesMut, BufMut};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tracing::{debug, info, warn, error};
@@ -70,7 +70,7 @@ impl RealityHandshake {
 
         // 6. 推导握手密钥
         let transcript0 = vec![client_hello_raw.as_slice(), server_hello.handshake_payload()];
-        let (mut hs_keys, handshake_secret) = TlsKeys::derive_handshake_keys(
+        let (hs_keys, handshake_secret) = TlsKeys::derive_handshake_keys(
             &shared_secret, 
             &super::crypto::hash_transcript(&transcript0)
         )?;

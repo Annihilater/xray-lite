@@ -1,15 +1,15 @@
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use tokio::io::{ReadBuf, AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{ReadBuf, AsyncRead, AsyncWrite};
 use bytes::Buf;
 use anyhow::Result;
 use tokio::net::{TcpListener, TcpStream};
-use tracing::{error, info, warn, debug};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::config::{Config, Inbound, Security};
 use crate::network::ConnectionManager;
-use crate::protocol::vless::{Command, VlessCodec};
+use crate::protocol::vless::VlessCodec;
 use crate::transport::{RealityServer, XhttpServer};
 use crate::handler::serve_vless;
 

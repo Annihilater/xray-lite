@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use bytes::{Buf, Bytes};
+use bytes::Buf;
 
 pub struct ClientHelloInfo {
     pub session_id: Vec<u8>,

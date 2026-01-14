@@ -1,6 +1,6 @@
 use std::sync::Mutex;
 use once_cell::sync::Lazy;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use tokio::net::TcpStream;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, error};
@@ -66,7 +66,7 @@ where
     }
 
     /// 双向数据转发
-    pub async fn relay(mut self) -> Result<()> {
+    pub async fn relay(self) -> Result<()> {
         debug!("开始双向数据转发 (已启用内存池)");
 
         let (mut c_r, mut c_w) = tokio::io::split(self.client_stream);

@@ -1,4 +1,3 @@
-use anyhow::Result;
 use bytes::{BufMut, BytesMut};
 
 /// 生成一个最小的自签名证书（用于测试）
