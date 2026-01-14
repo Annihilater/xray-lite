@@ -26,7 +26,7 @@ static SESSIONS: Lazy<Arc<DashMap<String, Session>>> = Lazy::new(|| {
     Arc::new(DashMap::new())
 });
 
-/// 终极 H2/XHTTP 处理器 (v0.3.6: 极致稳定性/断连修复版)
+/// 终极 H2/XHTTP 处理器 (v0.3.7: 解决瞬断与卡顿补丁版)
 #[derive(Clone)]
 pub struct H2Handler {
     config: XhttpConfig,
@@ -226,7 +226,9 @@ impl H2Handler {
             
             let mut first_chunk = true;
 
-            while let Ok(Some(chunk)) = tokio::time::timeout(Duration::from_secs(30), body.data()).await {
+            // 移除 30s 强行超时，改用更稳健的流式读取
+            // 这样即使 30s 没有上行数据，连接也不会被误杀
+            while let Some(chunk) = body.data().await {
                 let chunk = match chunk {
                     Ok(c) => c,
                     Err(e) => {
@@ -328,8 +330,19 @@ impl H2Handler {
             Ok::<(), anyhow::Error>(())
         };
 
-        let _ = tokio::spawn(up_task);
-        down_task.await?; 
+        // 协同工作：只要有一个任务结束（不管是上行还是下行、报错还是正常结束），就清理连接
+        tokio::select! {
+            res = up_task => {
+                if let Err(e) = res {
+                    debug!("XHTTP UP 异常结束: {}", e);
+                }
+            }
+            res = down_task => {
+                if let Err(e) = res {
+                    debug!("XHTTP DOWN 异常结束: {}", e);
+                }
+            }
+        }
         Ok(())
     }
 
@@ -386,8 +399,11 @@ impl H2Handler {
             Ok::<(), anyhow::Error>(())
         };
 
-        let _ = tokio::spawn(upstream);
-        let _ = downstream.await;
+        // 协同工作
+        tokio::select! {
+            _ = upstream => {},
+            _ = downstream => {},
+        }
         
         SESSIONS.remove(&path);
         notify.notify_waiters();
