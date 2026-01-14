@@ -1,12 +1,11 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use bytes::{Buf, Bytes, BytesMut};
 use h2::server::{self, SendResponse};
 use h2::SendStream;
 use hyper::http::{Request, Response, StatusCode};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{mpsc, Notify};
-use tracing::{debug, info, warn, error, trace};
-use std::collections::HashMap;
+use tracing::{debug, warn, error, trace};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -75,13 +74,16 @@ impl H2Handler {
 
         let mut builder = server::Builder::new();
         builder
-            .handshake_timeout(Duration::from_secs(20)) // 增加握手超时容错
             .initial_window_size(4194304)    // 4MB 窗口
             .initial_connection_window_size(8388608) // 8MB 连接窗口
             .max_concurrent_streams(500)
             .max_frame_size(16384);
 
-        let mut connection = builder.handshake(stream).await?;
+        // 使用 tokio::time::timeout 替代不存在的 handshake_timeout 方法
+        let mut connection = tokio::time::timeout(
+            Duration::from_secs(20),
+            builder.handshake(stream)
+        ).await??;
 
         // --- 🌟 H2 Ping-Pong 随机心跳混淆 (V89) ---
         // 获取 PingPong 句柄，启动后台任务随机发送 PING
@@ -186,7 +188,7 @@ impl H2Handler {
     }
 
     async fn handle_standalone<F, Fut>(
-        mut request: Request<h2::RecvStream>,
+        request: Request<h2::RecvStream>,
         mut respond: SendResponse<Bytes>,
         handler: F,
         is_grpc: bool,
