@@ -19,7 +19,7 @@ echo -e "${BLUE}  Xray-Lite 一键安装${NC}"
 echo -e "${BLUE}  Version / 版本: ${VERSION}${NC}"
 echo -e "${BLUE}=========================================${NC}"
 echo ""
-
+VERSION="v0.4.2"
 # Check if running as root / 检查是否为 root
 if [ "$EUID" -ne 0 ]; then 
     echo -e "${RED}Please run as root / 请使用 root 权限运行${NC}"
