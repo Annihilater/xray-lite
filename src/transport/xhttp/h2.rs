@@ -26,7 +26,7 @@ static SESSIONS: Lazy<Arc<DashMap<String, Session>>> = Lazy::new(|| {
     Arc::new(DashMap::new())
 });
 
-/// 终极 H2/XHTTP 处理器 (v0.3.5: 性能与轻量平衡版)
+/// 终极 H2/XHTTP 处理器 (v0.3.6: 极致稳定性/断连修复版)
 #[derive(Clone)]
 pub struct H2Handler {
     config: XhttpConfig,
@@ -75,9 +75,10 @@ impl H2Handler {
 
         let mut builder = server::Builder::new();
         builder
-            .initial_window_size(4194304)    // 4MB 窗口 (平衡性能与内存的核心参数)
+            .handshake_timeout(Duration::from_secs(20)) // 增加握手超时容错
+            .initial_window_size(4194304)    // 4MB 窗口
             .initial_connection_window_size(8388608) // 8MB 连接窗口
-            .max_concurrent_streams(500)     // 回归 500 并发，保持极致轻量
+            .max_concurrent_streams(500)
             .max_frame_size(16384);
 
         let mut connection = builder.handshake(stream).await?;
@@ -102,9 +103,10 @@ impl H2Handler {
                     };
                     
                     // 发送 PING
-                    // send_ping 返回 Result，不是 Future，且 opaque() 不接受参数
-                    if ping_pong.send_ping(h2::Ping::opaque()).is_err() {
-                        break;
+                    if let Err(e) = ping_pong.send_ping(h2::Ping::opaque()) {
+                        debug!("🌪️ H2 Noise: Ping failed (system busy or network jitter): {}", e);
+                        // 稳定性优化：Ping 这种辅助任务失败不应该立即拖死主循环，尝试等待后重启逻辑
+                        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                     }
                     debug!("🌪️ H2 Noise: Sent random PING");
                 }
