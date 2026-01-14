@@ -25,7 +25,7 @@ static SESSIONS: Lazy<Arc<DashMap<String, Session>>> = Lazy::new(|| {
     Arc::new(DashMap::new())
 });
 
-/// 终极 H2/XHTTP 处理器 (v0.3.9: 增强日志与稳定性版)
+/// 终极 H2/XHTTP 处理器 (v0.4.0: 逻辑修复与架构加固版)
 #[derive(Clone)]
 pub struct H2Handler {
     config: XhttpConfig,
@@ -332,18 +332,11 @@ impl H2Handler {
             Ok::<(), anyhow::Error>(())
         };
 
-        // 协同工作：只要有一个任务结束（不管是上行还是下行、报错还是正常结束），就清理连接
-        tokio::select! {
-            res = up_task => {
-                if let Err(e) = res {
-                    debug!("XHTTP UP 异常结束: {}", e);
-                }
-            }
-            res = down_task => {
-                if let Err(e) = res {
-                    debug!("XHTTP DOWN 异常结束: {}", e);
-                }
-            }
+        // 修复：不能使用 select!，因为上行流结束不代表下行流也该结束
+        // 重新使用 spawn 模式，让两个流独立运行至自然闭合
+        tokio::spawn(up_task);
+        if let Err(e) = down_task.await {
+            debug!("XHTTP 传输级异常: {}", e);
         }
         Ok(())
     }
@@ -401,11 +394,9 @@ impl H2Handler {
             Ok::<(), anyhow::Error>(())
         };
 
-        // 协同工作
-        tokio::select! {
-            _ = upstream => {},
-            _ = downstream => {},
-        }
+        // 修复：独立运行
+        tokio::spawn(upstream);
+        let _ = downstream.await;
         
         SESSIONS.remove(&path);
         notify.notify_waiters();
