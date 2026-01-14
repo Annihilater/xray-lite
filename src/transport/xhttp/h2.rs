@@ -5,7 +5,7 @@ use h2::SendStream;
 use hyper::http::{Request, Response, StatusCode};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{mpsc, Notify};
-use tracing::{debug, info, warn, error, trace};
+use tracing::{debug, info, warn};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -25,7 +25,7 @@ static SESSIONS: Lazy<Arc<DashMap<String, Session>>> = Lazy::new(|| {
     Arc::new(DashMap::new())
 });
 
-/// 终极 H2/XHTTP 处理器 (v0.2.89: gRPC Framing Fix)
+/// 终极 H2/XHTTP 处理器 (v0.2.100: gRPC Framing Fix)
 #[derive(Clone)]
 pub struct H2Handler {
     config: XhttpConfig,

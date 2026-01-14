@@ -60,6 +60,8 @@ hex = "0.4"
 base64 = "0.21"
 rcgen = "0.12"
 tikv-jemallocator = "0.5"
+lru = "0.12"
+dashmap = "5.5"
 
 
 [dev-dependencies]

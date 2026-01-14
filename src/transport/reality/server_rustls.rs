@@ -186,8 +186,9 @@ impl RealityServerRustls {
             let mut cache = CERT_CACHE.lock().unwrap();
             if let Some((cert_bytes, key_bytes)) = cache.get(&key) {
                 // Reconstruct from cached bytes
-                let cert = CertificateDer::from(cert_bytes.clone());
-                let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_bytes.clone()));
+                let cert: CertificateDer<'static> = CertificateDer::from(cert_bytes.clone());
+                let key_inner: PrivatePkcs8KeyDer<'static> = PrivatePkcs8KeyDer::from(key_bytes.clone());
+                let key: PrivateKeyDer<'static> = PrivateKeyDer::Pkcs8(key_inner);
                 return Ok((cert, key));
             }
         }
