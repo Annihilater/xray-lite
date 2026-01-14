@@ -25,7 +25,7 @@ static SESSIONS: Lazy<Arc<DashMap<String, Session>>> = Lazy::new(|| {
     Arc::new(DashMap::new())
 });
 
-/// 终极 H2/XHTTP 处理器 (v0.3.7: 解决瞬断与卡顿补丁版)
+/// 终极 H2/XHTTP 处理器 (v0.3.9: 增强日志与稳定性版)
 #[derive(Clone)]
 pub struct H2Handler {
     config: XhttpConfig,
@@ -70,7 +70,7 @@ impl H2Handler {
         F: Fn(Box<dyn crate::server::AsyncStream>) -> Fut + Clone + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<()>> + Send + 'static,
     {
-        debug!("XHTTP: 启动 V35 拟态防御引擎 (Balanced Performance + Adaptive Memory)");
+        info!("XHTTP: 启动 V39 拟态防御引擎 (Balanced Performance + Adaptive Memory)");
 
         let mut builder = server::Builder::new();
         builder
