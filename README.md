@@ -196,7 +196,10 @@ MIT License - See [LICENSE](LICENSE) for details.
 If this project is helpful to you, please consider buying me a coffee!
 
 如果你觉得好用，请我喝杯咖啡吧！
-
+sol:GJu2g8nd5pQMCdPj1uBJ2bdDguSTMXU6uqXmUbYPS9x
+base:0xBC14Ef78a454b4D52A1b0605b707b85Eb9A6b9A1
+btc:162vtnicREByPgxh6KLbp2tknXuFCQDHMC
+sui:0xd6d896a0ab9ec220c32b17ebc3f641a3a1d7fa140c3c03d9307797704132dc78
 **[☕ Buy Me a Coffee / 请我喝咖啡](https://buymeacoffee.com/undeadundead)**
 
 ---
