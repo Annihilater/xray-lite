@@ -330,6 +330,28 @@ systemctl enable xray-lite >/dev/null 2>&1
 echo -e "${GREEN}✓ Service installed / 服务已安装${NC}"
 echo ""
 
+# Configure journald log rotation for xray-lite / 配置 journald 日志轮转
+echo -e "${YELLOW}Configuring log rotation... / 配置日志轮转...${NC}"
+mkdir -p /etc/systemd/journald.conf.d
+cat > /etc/systemd/journald.conf.d/xray-lite.conf << EOF
+# Xray-Lite journald log rotation configuration
+# Xray-Lite journald 日志轮转配置
+[Journal]
+# Maximum disk usage for logs / 日志最大磁盘使用量
+SystemMaxUse=50M
+# Maximum size of individual log files / 单个日志文件最大大小
+SystemMaxFileSize=10M
+# Log retention time (7 days) / 日志保留时间（7天）
+MaxRetentionSec=7day
+# Compress logs older than 1 day / 压缩超过1天的日志
+Compress=yes
+EOF
+
+# Restart journald to apply configuration / 重启 journald 应用配置
+systemctl restart systemd-journald >/dev/null 2>&1
+echo -e "${GREEN}✓ Log rotation configured (max 50MB, 7 days) / 日志轮转已配置 (最大 50MB, 7天)${NC}"
+echo ""
+
 # Configure firewall
 echo -e "${YELLOW}[6/6] Configuring firewall... / 配置防火墙...${NC}"
 # Ensure PORT is numeric again just in case
