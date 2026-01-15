@@ -5,7 +5,7 @@ use h2::SendStream;
 use hyper::http::{Request, Response, StatusCode};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{mpsc, Notify};
-use tracing::{debug, info, warn};
+use tracing::{debug, info, warn, error, trace};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -25,7 +25,7 @@ static SESSIONS: Lazy<Arc<DashMap<String, Session>>> = Lazy::new(|| {
     Arc::new(DashMap::new())
 });
 
-/// 终极 H2/XHTTP 处理器 (v0.4.3: 流量特征优化版)
+/// 终极 H2/XHTTP 处理器 (v0.4.1: 编译修复与告警清理版)
 #[derive(Clone)]
 pub struct H2Handler {
     config: XhttpConfig,
@@ -36,57 +36,28 @@ impl H2Handler {
         Self { config }
     }
 
-    /// 生成随机 Padding 字符串
+    /// 生成随机 Padding 字符串，用于模糊 HTTP 头部长度
     fn gen_padding() -> String {
         let mut rng = rand::thread_rng();
-        let len = rng.gen_range(64..512);
+        let len = rng.gen_range(64..512); // 随机 64 到 512 字节
         rng.sample_iter(&Alphanumeric)
             .take(len)
             .map(char::from)
             .collect()
     }
 
-    /// v0.4.3: 生成伪装的请求 ID (模拟 CDN/反代)
-    fn gen_request_id() -> String {
-        let mut rng = rand::thread_rng();
-        format!("{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
-            rng.gen::<u32>(),
-            rng.gen::<u16>(),
-            rng.gen::<u16>(),
-            rng.gen::<u16>(),
-            rng.gen::<u64>() & 0xFFFFFFFFFFFF
-        )
-    }
-
-    /// v0.4.3: 生成伪装的缓存状态
-    fn gen_cache_status() -> &'static str {
-        let mut rng = rand::thread_rng();
-        match rng.gen_range(0..10) {
-            0..=3 => "HIT",
-            4..=6 => "MISS",
-            7..=8 => "BYPASS",
-            _ => "DYNAMIC",
-        }
-    }
-
-    /// v0.4.3: 智能分片发送 - 模拟真实网页流量分布
+    /// 智能分片发送（流量整形/Shredder）
+    /// 将大数据块切分成随机大小的小块发送，消除长度特征
     fn send_split_data(src: &mut BytesMut, send_stream: &mut SendStream<Bytes>) -> Result<()> {
         let mut rng = rand::thread_rng();
         
         while src.has_remaining() {
-            let chunk_size = {
-                let r: f64 = rng.gen();
-                if r < 0.35 {
-                    rng.gen_range(128..512)      // 35% 小包
-                } else if r < 0.70 {
-                    rng.gen_range(512..2048)     // 35% 中包
-                } else if r < 0.90 {
-                    rng.gen_range(2048..8192)    // 20% 大包
-                } else {
-                    rng.gen_range(8192..16384)   // 10% 超大包
-                }
-            };
+            // 均衡优化：随机切片大小 1024B - 4096B
+            // 在保持轻量级内存占用的同时，确保推特头像和视频的高速吞吐
+            let chunk_size = rng.gen_range(1024..4096);
             let split_len = std::cmp::min(src.len(), chunk_size);
+            
+            // split_to 会消耗 src 前面的字节，返回新的 Bytes (Zero-copy)
             let chunk = src.split_to(split_len).freeze();
             send_stream.send_data(chunk, false)?;
         }
@@ -99,38 +70,52 @@ impl H2Handler {
         F: Fn(Box<dyn crate::server::AsyncStream>) -> Fut + Clone + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<()>> + Send + 'static,
     {
-        info!("XHTTP: 启动 V42 拟态防御引擎 (Enhanced gRPC Auto-Detection)");
+        info!("XHTTP: 启动 V41 拟态防御引擎 (Balanced Performance + Adaptive Memory)");
 
         let mut builder = server::Builder::new();
         builder
-            .initial_window_size(4194304)
-            .initial_connection_window_size(8388608)
+            .initial_window_size(4194304)    // 4MB 窗口
+            .initial_connection_window_size(8388608) // 8MB 连接窗口
             .max_concurrent_streams(500)
             .max_frame_size(16384);
 
+        // 使用 tokio::time::timeout 替代不存在的 handshake_timeout 方法
         let mut connection = tokio::time::timeout(
             Duration::from_secs(20),
             builder.handshake(stream)
         ).await??;
 
-        // H2 Ping-Pong 随机心跳
+        // --- 🌟 H2 Ping-Pong 随机心跳混淆 (V89) ---
+        // 获取 PingPong 句柄，启动后台任务随机发送 PING
+        // 这会迫使客户端回复 ACK，制造双向的背景流量噪声，干扰时序分析。
         if let Some(mut ping_pong) = connection.ping_pong() {
             tokio::spawn(async move {
                 loop {
+                    // 随机休眠 15 - 45 秒 (模拟真实心跳间隔，不要太频繁以免浪费流量)
                     let sleep_ms = {
                          let mut rng = rand::thread_rng();
                          rng.gen_range(15000..45000)
                     };
                     tokio::time::sleep(tokio::time::Duration::from_millis(sleep_ms)).await;
 
-                    // 如果 ping 失败（连接已断开），退出此任务
+                    // 生成随机 8 字节载荷 (h2 crate 限制 payload 为 opaque，主要依赖时序混淆)
+                    let _payload: [u8; 8] = {
+                        let mut rng = rand::thread_rng();
+                        rng.gen()
+                    };
+                    
+                    // 发送 PING
                     if let Err(e) = ping_pong.send_ping(h2::Ping::opaque()) {
-                        debug!("🌪️ H2 Noise: Ping failed, connection closed: {}", e);
-                        break;  // 退出循环，任务结束
+                        debug!("🌪️ H2 Noise: Ping failed (system busy or network jitter): {}", e);
+                        // 稳定性优化：Ping 这种辅助任务失败不应该立即拖死主循环，尝试等待后重启逻辑
+                        // tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                        break;
                     }
+                    debug!("🌪️ H2 Noise: Sent random PING");
                 }
             });
         }
+        // -------------------------------------------
         
         while let Some(result) = connection.accept().await {
             match result {
@@ -176,10 +161,11 @@ impl H2Handler {
             let user_agent = request.headers().get("user-agent").and_then(|v| v.to_str().ok()).unwrap_or("");
             let is_pc = user_agent.contains("Go-http-client");
 
-            // 移动端优化：等待 Session 就绪
-            // 减少最大等待时间到 1.5s，避免客户端超时
+            // 等候配对逻辑
+            // 移动端网络可能存在波动，增加等待时间至 2 秒 (40 * 50ms)
+            // 避免因 POST 请求过早到达但 Session 尚未就绪而导致的断流
             if !is_pc {
-                for _ in 0..30 {
+                for _ in 0..40 {
                     let found = SESSIONS.contains_key(&path);
                     if found { break; }
                     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -192,6 +178,7 @@ impl H2Handler {
                 Self::handle_xhttp_post(request, respond, tx).await?;
             } else {
                 let content_type = request.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("");
+                // 修复：PC 端也可能使用 standard gRPC 模式 (如 Xray-core 配置为 grpc)，不能强制 !is_pc
                 let is_grpc = content_type.contains("grpc");
                 Self::handle_standalone(request, respond, handler, is_grpc).await?;
             }
@@ -215,9 +202,8 @@ impl H2Handler {
             .status(StatusCode::OK)
             .header("content-type", "application/octet-stream")
             .header("server", "nginx/1.26.0")
-            .header("x-request-id", Self::gen_request_id())
-            .header("x-cache", Self::gen_cache_status())
-            .header("x-padding", Self::gen_padding())
+            .header("cache-control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0")
+            .header("x-padding", Self::gen_padding()) // 注入动态填充
             .body(())
             .unwrap();
 
@@ -228,63 +214,69 @@ impl H2Handler {
         let use_grpc_framing_up = use_grpc_framing.clone();
         let use_grpc_framing_down = use_grpc_framing.clone();
 
+        debug!("XHTTP Standard: 启动 VLESS 处理逻辑 (is_grpc: {})", is_grpc);
         tokio::spawn(handler(Box::new(server_io)));
         let (mut client_read, mut client_write) = tokio::io::split(client_io);
 
-        // UP (Client -> Server)
+        // UP
         let up_task = async move {
             let mut body = request.into_body();
             let mut leftover = BytesMut::new();
             use tokio::io::AsyncWriteExt;
+            debug!("XHTTP UP: 开始从请求体读取数据");
             
+            let mut first_chunk = true;
+
+            // 移除 30s 强行超时，改用更稳健的流式读取
+            // 这样即使 30s 没有上行数据，连接也不会被误杀
             while let Some(chunk) = body.data().await {
                 let chunk = match chunk {
                     Ok(c) => c,
                     Err(e) => {
-                        debug!("XHTTP UP: Stream closed/error: {}", e);
+                        let err_str = e.to_string();
+                        if err_str.contains("stream no longer needed") || err_str.contains("connection reset") {
+                            debug!("XHTTP UP: 连接正常结束 / 重置: {}", e);
+                        } else {
+                            error!("XHTTP UP: 读取请求体错误: {}", e);
+                        }
                         break;
                     }
                 };
                 let _ = body.flow_control().release_capacity(chunk.len());
+                trace!("XHTTP UP: 收到 {} 字节原始数据", chunk.len());
                 
+                if first_chunk && use_grpc_framing_up.load(Ordering::Relaxed) {
+                    first_chunk = false;
+                    // gRPC 帧首字节必须是 0x00 (非压缩) 或 0x01 (压缩)
+                    // 如果不是，说明客户端虽然传了 grpc header 但实际上发的是普通流
+                    if chunk.len() > 0 && chunk[0] != 0x00 && chunk[0] != 0x01 {
+                        warn!("XHTTP UP: 检测到首字节 ({:02x}) 非 gRPC 格式，自动回退到普通流模式", chunk[0]);
+                        use_grpc_framing_up.store(false, Ordering::Relaxed);
+                    }
+                }
+
                 if use_grpc_framing_up.load(Ordering::Relaxed) {
                     leftover.extend_from_slice(&chunk);
-                    
-                    // 循环处理完整帧
-                    loop {
-                        if leftover.len() < 5 {
-                            break;
-                        }
-
-                        // 1. 严格校验 gRPC 标志 (Byte 0 必须是 0 或 1)
-                        let flag = leftover[0];
-                        if flag != 0 && flag != 1 {
-                            warn!("XHTTP UP: 检测到非 gRPC 标志 ({:02x})，流已损坏或非 gRPC，回退到透传", flag);
-                            use_grpc_framing_up.store(false, Ordering::Relaxed);
-                            client_write.write_all(&leftover).await?;
-                            leftover.clear();
-                            break;
-                        }
-
-                        // 2. 读取长度
+                    while leftover.len() >= 5 {
                         let msg_len = u32::from_be_bytes([leftover[1], leftover[2], leftover[3], leftover[4]]) as usize;
                         
-                        // 3. 校验长度 (放宽到 16MB)
-                        if msg_len > 16_777_216 {
-                            warn!("XHTTP UP: 异常帧长度 ({})，判定为原始流误入，回退到透传", msg_len);
+                        // 关键修复：长度校验 
+                        // 如果长度超过 64KB，通常不是合法的 gRPC 代理包格式 (通常为 VLESS 原始流误入)
+                        if msg_len > 65535 {
+                            warn!("XHTTP UP: 检测到异常消息长度 ({}), 判定为 VLESS 原始流，转回普通模式", msg_len);
                             use_grpc_framing_up.store(false, Ordering::Relaxed);
                             client_write.write_all(&leftover).await?;
                             leftover.clear();
                             break;
                         }
 
-                        // 4. 提取数据
                         if leftover.len() >= 5 + msg_len {
-                            let _ = leftover.split_to(5); // Header
-                            let data = leftover.split_to(msg_len); // Payload
+                            let _ = leftover.split_to(5);
+                            let data = leftover.split_to(msg_len);
+                            trace!("XHTTP UP: 解析到 {} 字节 gRPC 消息", data.len());
                             client_write.write_all(&data).await?;
-                        } else {
-                            // 数据未齐，等待下一块
+                        } else { 
+                            debug!("XHTTP UP: gRPC 消息未全 (需要 {} 字节，现有 {} 字节)", 5 + msg_len, leftover.len());
                             break; 
                         }
                     }
@@ -292,32 +284,43 @@ impl H2Handler {
                     client_write.write_all(&chunk).await?;
                 }
             }
+            debug!("XHTTP UP: 请求体读取结束");
             Ok::<(), anyhow::Error>(())
         };
 
-        // DOWN (Server -> Client)
+        // DOWN (使用 Traffic Shaping)
         let down_task = async move {
             let mut buf = BytesMut::with_capacity(65536);
             use tokio::io::AsyncReadExt;
+            debug!("XHTTP DOWN: 开始从 VLESS 读取数据并发送给客户端");
             loop {
                 if buf.capacity() < 2048 {
                     buf.reserve(65536);
                 }
                 let n = client_read.read_buf(&mut buf).await?;
-                if n == 0 { break; }
+                if n == 0 { 
+                    debug!("XHTTP DOWN: VLESS 已关闭输出");
+                    break; 
+                }
+                trace!("XHTTP DOWN: 从 VLESS 收到 {} 字节数据", n);
                 
                 if use_grpc_framing_down.load(Ordering::Relaxed) {
                     let mut frame = BytesMut::with_capacity(5 + n);
-                    frame.extend_from_slice(&[0u8]); // Flag
-                    frame.extend_from_slice(&(n as u32).to_be_bytes()); // Length
-                    frame.extend_from_slice(&buf[..n]); // Data
+                    frame.extend_from_slice(&[0u8]);
+                    frame.extend_from_slice(&(n as u32).to_be_bytes());
+                    // copy needed here as we are framing
+                    frame.extend_from_slice(&buf[..n]);
                     buf.advance(n);
+
+                    // 整形发送 gRPC 帧
                     Self::send_split_data(&mut frame, &mut send_stream)?;
                 } else {
+                    // 整形发送普通数据流
                     Self::send_split_data(&mut buf, &mut send_stream)?;
                 }
             }
             
+            debug!("XHTTP DOWN: 发送结束标记 (Trailers/EndStream)");
             if use_grpc_framing_down.load(Ordering::Relaxed) {
                 let mut trailers = hyper::http::HeaderMap::new();
                 trailers.insert("grpc-status", "0".parse().unwrap());
@@ -328,6 +331,8 @@ impl H2Handler {
             Ok::<(), anyhow::Error>(())
         };
 
+        // 修复：不能使用 select!，因为上行流结束不代表下行流也该结束
+        // 重新使用 spawn 模式，让两个流独立运行至自然闭合
         tokio::spawn(up_task);
         if let Err(e) = down_task.await {
             debug!("XHTTP 传输级异常: {}", e);
@@ -357,9 +362,8 @@ impl H2Handler {
             .status(StatusCode::OK)
             .header("content-type", "application/octet-stream")
             .header("server", "nginx/1.26.0")
-            .header("x-request-id", Self::gen_request_id())
-            .header("x-cache", Self::gen_cache_status())
-            .header("x-padding", Self::gen_padding())
+            .header("cache-control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0")
+            .header("x-padding", Self::gen_padding()) // 注入动态填充
             .body(())
             .unwrap();
         let mut send_stream = respond.send_response(response, false)?;
@@ -373,6 +377,8 @@ impl H2Handler {
                 }
                 let n = client_read.read_buf(&mut buf).await?;
                 if n == 0 { break; }
+                
+                // 整形发送
                 Self::send_split_data(&mut buf, &mut send_stream)?;
             }
             send_stream.send_data(Bytes::new(), true)?;
@@ -387,6 +393,7 @@ impl H2Handler {
             Ok::<(), anyhow::Error>(())
         };
 
+        // 修复：独立运行
         tokio::spawn(upstream);
         let _ = downstream.await;
         
@@ -402,20 +409,15 @@ impl H2Handler {
     ) -> Result<()> {
         let mut body = request.into_body();
         while let Some(chunk_res) = body.data().await {
-            match chunk_res {
-                Ok(chunk) => {
-                    let _ = body.flow_control().release_capacity(chunk.len());
-                    let _ = tx.send(chunk);
-                }
-                Err(e) => debug!("XHTTP POST Error: {}", e),
-            }
+            let chunk = chunk_res?;
+            let _ = body.flow_control().release_capacity(chunk.len());
+            let _ = tx.send(chunk);
         }
         let response = Response::builder()
             .status(StatusCode::OK)
             .header("server", "nginx/1.26.0")
-            .header("x-request-id", Self::gen_request_id())
-            .header("x-cache", Self::gen_cache_status())
-            .header("x-padding", Self::gen_padding())
+            .header("cache-control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0")
+            .header("x-padding", Self::gen_padding()) // 注入动态填充
             .body(())
             .unwrap();
         respond.send_response(response, true)?;
