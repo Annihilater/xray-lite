@@ -123,9 +123,10 @@ impl H2Handler {
                     };
                     tokio::time::sleep(tokio::time::Duration::from_millis(sleep_ms)).await;
 
+                    // 如果 ping 失败（连接已断开），退出此任务
                     if let Err(e) = ping_pong.send_ping(h2::Ping::opaque()) {
-                        debug!("🌪️ H2 Noise: Ping failed: {}", e);
-                        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                        debug!("🌪️ H2 Noise: Ping failed, connection closed: {}", e);
+                        break;  // 退出循环，任务结束
                     }
                 }
             });
