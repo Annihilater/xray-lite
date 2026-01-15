@@ -70,7 +70,7 @@ pub mod loader {
                     match HashMap::try_from(map) {
                         Ok(mut ports_map) => {
                             for port in &ports {
-                                if let Err(e) = ports_map.insert(*port, 1, 0) {
+                                if let Err(e) = ports_map.insert(*port, 1u32, 0) {
                                     error!("Failed to add port {} to XDP Map: {}", port, e);
                                 } else {
                                     info!("🛡️  Port {} is now protected by XDP Kernel Firewall (DROP non-TLS)", port);

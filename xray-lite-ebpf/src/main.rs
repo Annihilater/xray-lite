@@ -11,7 +11,7 @@ use aya_log_ebpf::{info, warn};
 use core::mem;
 
 #[map]
-static ALLOWED_PORTS: HashMap<u16, u8> = HashMap::with_max_entries(1024, 0);
+static ALLOWED_PORTS: HashMap<u16, u32> = HashMap::with_max_entries(1024, 0);
 
 #[repr(C)]
 pub struct EthHdr {
