@@ -40,3 +40,7 @@ gh
 /release_artifacts/
 .gemini/
 .antigravity/
+
+# Compiled Binaries
+vless-server-linux-*
+keygen-linux-*
