@@ -2,12 +2,14 @@
 pub mod loader {
     use aya::programs::XdpFlags;
     use aya::{include_bytes_aligned, programs::Xdp, Bpf};
+    use aya::maps::HashMap;
     use aya_log::EbpfLogger;
     use tracing::{error, info, warn};
     use tokio;
 
-    pub fn start_xdp(iface: &str) {
+    pub fn start_xdp(iface: &str, ports: Vec<u16>) {
         let iface = iface.to_string();
+        let ports = ports.clone();
 
         // Must use tokio::spawn to provide Reactor context for aya::log
         tokio::spawn(async move {
@@ -61,6 +63,25 @@ pub mod loader {
                 "🚀 XDP 防火墙已成功挂载到 {}！高性能内核级过滤生效中。",
                 iface
             );
+
+            // --- Configure Dynamic Ports ---
+            match bpf.map_mut("ALLOWED_PORTS") {
+                Some(map) => {
+                    match HashMap::try_from(map) {
+                        Ok(mut ports_map) => {
+                            for port in &ports {
+                                if let Err(e) = ports_map.insert(*port, 1, 0) {
+                                    error!("Failed to add port {} to XDP Map: {}", port, e);
+                                } else {
+                                    info!("🛡️  Port {} is now protected by XDP Kernel Firewall (DROP non-TLS)", port);
+                                }
+                            }
+                        },
+                        Err(e) => error!("Failed to access ALLOWED_PORTS map as HashMap: {}", e),
+                    }
+                },
+                None => error!("XDP Map 'ALLOWED_PORTS' not found in eBPF program!"),
+            }
 
             // 保持 Async Task 存活，防止 Bpf 对象被 Drop
             loop {

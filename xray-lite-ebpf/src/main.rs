@@ -1,9 +1,17 @@
 #![no_std]
 #![no_main]
 
-use aya_ebpf::{bindings::xdp_action, macros::xdp, programs::XdpContext};
-use aya_log_ebpf::info;
+use aya_ebpf::{
+    bindings::xdp_action,
+    macros::{map, xdp},
+    maps::HashMap,
+    programs::XdpContext,
+};
+use aya_log_ebpf::{info, warn};
 use core::mem;
+
+#[map]
+static ALLOWED_PORTS: HashMap<u16, u8> = HashMap::with_max_entries(1024, 0);
 
 #[repr(C)]
 pub struct EthHdr {
@@ -52,7 +60,7 @@ fn try_xdp_firewall(ctx: XdpContext) -> Result<u32, ()> {
     let end = ctx.data_end();
 
     // 1. Ethernet
-    let eth_hdr = unsafe { &*(start as *const EthHdr) }; // Safe pointer cast via ref
+    let eth_hdr = unsafe { &*(start as *const EthHdr) };
     if start + mem::size_of::<EthHdr>() > end {
         return Ok(xdp_action::XDP_PASS);
     }
@@ -68,7 +76,7 @@ fn try_xdp_firewall(ctx: XdpContext) -> Result<u32, ()> {
     let ip_hdr = unsafe { &*(ip_start as *const IpHdr) };
     if ip_hdr.protocol != 6 {
         return Ok(xdp_action::XDP_PASS);
-    } // TCP only
+    }
 
     let ihl = ip_hdr.version_ihl & 0x0F;
     let ip_len = (ihl as usize) * 4;
@@ -80,51 +88,52 @@ fn try_xdp_firewall(ctx: XdpContext) -> Result<u32, ()> {
     }
     let tcp_hdr = unsafe { &*(tcp_start as *const TcpHdr) };
 
-    // Calculate TCP header length (Data Offset)
-    // res1 on Little Endian struct might be tricky, let's look at raw bytes if needed
-    // But struct definition assumes standard C layout
-    // Bitfields in C are tricky in Rust. We need to be careful.
-    // Actually, `res1` in my struct definition covers the 4 bits of Data Offset if I defined it right?
-    // standard TCP header:
-    // | Source | Dest |
-    // | Seq |
-    // | Ack |
-    // | DO(4) Res(3) NS(1) | Flags | Window |
-    // My struct:
-    // res1: u8 ?
-    // Wait, u16 port (2) + u16 port (2) + u32 (4) + u32 (4) = 12 bytes.
-    // Next is Data Offset (4 bits) + Reserved (3 bits) + NS (1 bit). Total 1 byte.
-    // Then Flags (1 byte).
-    // So `res1` corresponds to DO+Res+NS.
+    // Check if port is protected
+    let dest_port = u16::from_be(tcp_hdr.dest);
+
+    // Lookup in HashMap. If key exists, it returns Some(&value).
+    if unsafe { ALLOWED_PORTS.get(&dest_port).is_none() } {
+        // Port not in protection list -> PASS
+        return Ok(xdp_action::XDP_PASS);
+    }
+
+    // --- Protected Port Logic Below ---
 
     let doff = (tcp_hdr.res1 & 0xF0) >> 4;
     let tcp_len = (doff as usize) * 4;
 
-    // 4. TLS
+    // 4. TLS Deep Packet Inspection
     let payload_start = tcp_start + tcp_len;
 
     // Check minimal TLS header (5 bytes)
     if payload_start + 5 > end {
+        // TCP packet without payload (ACK, SYN, FIN) -> PASS
+        // We must allow TCP handshake packets!
         return Ok(xdp_action::XDP_PASS);
     }
 
     let content_type = unsafe { *(payload_start as *const u8) };
+
     // ContentType::Handshake is 22 (0x16)
     if content_type == 0x16 {
-        // Need to check Handshake type?
-        // TLS Record (5 bytes) + Handshake Header (1 byte MsgType)
         if payload_start + 6 <= end {
             let handshake_type = unsafe { *((payload_start + 5) as *const u8) };
             if handshake_type == 1 {
-                // ClientHello
-                info!(&ctx, "TLS ClientHello detected!");
-                // This is where we would parse SNI
-                // For now, pass
+                // ClientHello Detected -> Valid TLS Handshake -> PASS
+                info!(&ctx, "TLS ClientHello allowed on port {}", dest_port);
+                return Ok(xdp_action::XDP_PASS);
             }
         }
     }
 
-    Ok(xdp_action::XDP_PASS)
+    // If we are here, it means:
+    // 1. Packet has payload (len > 5)
+    // 2. It is NOT a valid TLS ClientHello (or at least first packet isn't)
+    // 3. It IS on a protected port
+
+    // DROP IT!
+    warn!(&ctx, "⛔ Blocked suspicious packet on port {}", dest_port);
+    Ok(xdp_action::XDP_DROP)
 }
 
 #[panic_handler]

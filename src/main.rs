@@ -66,7 +66,17 @@ async fn main() -> Result<()> {
     info!("🚀 Starting VLESS+Reality+XHTTP Server [V42-STABLE]");
     info!("📄 Loading config from: {}", args.config);
 
-    // 尝试启动 XDP
+    // 1. Load config FIRST to get ports
+    let config = Config::load(&args.config)?;
+    info!("✅ Configuration loaded successfully");
+
+    // 2. Extract ports for XDP protection
+    let mut protected_ports = Vec::new();
+    for inbound in &config.inbounds {
+        protected_ports.push(inbound.port);
+    }
+
+    // 3. Attempt to start XDP
     let xdp_enabled = args.enable_xdp || std::env::var("XRAY_XDP_ENABLE").is_ok();
     
     if xdp_enabled {
@@ -75,8 +85,8 @@ async fn main() -> Result<()> {
             // 如果环境变量指定了接口，优先使用
             let iface = std::env::var("XRAY_XDP_IFACE").unwrap_or(args.xdp_iface);
             info!("🔥 Attempting to load XDP Firewall on interface: {}", iface);
-            // XDP 线程会 detached 运行
-            xdp::loader::start_xdp(&iface);
+            // Pass the extracted ports to the loader
+            xdp::loader::start_xdp(&iface, protected_ports);
         }
         #[cfg(not(feature = "xdp"))]
         {
@@ -84,11 +94,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    // 加载配置
-    let config = Config::load(&args.config)?;
-    info!("✅ Configuration loaded successfully");
-
-    // 创建并启动服务器
+    // 4. Initialize and run server
     let server = Server::new(config)?;
     info!("🌐 Server initialized");
 
