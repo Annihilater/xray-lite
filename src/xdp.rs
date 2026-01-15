@@ -4,15 +4,22 @@ pub mod loader {
     use aya::{include_bytes_aligned, programs::Xdp, Bpf};
     use aya_log::EbpfLogger;
     use tracing::{error, info, warn};
+    use tokio;
 
-    pub fn start_xdp(iface: &str) -> Option<std::thread::JoinHandle<()>> {
+    pub fn start_xdp(iface: &str) {
         let iface = iface.to_string();
 
-        let handle = std::thread::spawn(move || {
+        // Must use tokio::spawn to provide Reactor context for aya::log
+        tokio::spawn(async move {
             info!("正在初始化 XDP 防火墙，接口: {}", iface);
 
             // 加载逻辑
             // 这里的路径是相对于 User Space crate root 的 (xray-lite/)
+            #[cfg(debug_assertions)]
+             let program_bytes = include_bytes_aligned!(
+                "../xray-lite-ebpf/target/bpfel-unknown-none/release/xray-lite-ebpf"
+            );
+            #[cfg(not(debug_assertions))]
             let program_bytes = include_bytes_aligned!(
                 "../xray-lite-ebpf/target/bpfel-unknown-none/release/xray-lite-ebpf"
             );
@@ -26,7 +33,7 @@ pub mod loader {
                 }
             };
 
-            // 初始化日志（可选）
+            // 初始化日志：必须在 Tokio Runtime 上下文中调用
             if let Err(e) = EbpfLogger::init(&mut bpf) {
                 warn!("XDP EbpfLogger 初始化失败 (非致命): {}", e);
             }
@@ -55,13 +62,10 @@ pub mod loader {
                 iface
             );
 
-            // 保持线程存活，否则 Bpf 对象 drop 会导致 XDP 被卸载
-            // 在实际产品中，应该监听一个关闭信号
+            // 保持 Async Task 存活，防止 Bpf 对象被 Drop
             loop {
-                std::thread::sleep(std::time::Duration::from_secs(60));
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
             }
         });
-
-        Some(handle)
     }
 }
