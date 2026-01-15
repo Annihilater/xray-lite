@@ -19,7 +19,7 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Version / 版本
-VERSION="v0.4.6"
+VERSION="v0.4.7"
 REPO="undead-undead/xray-lite"
 
 echo -e "${BLUE}=========================================${NC}"
@@ -54,6 +54,43 @@ esac
 echo -e "${GREEN}Detected architecture / 检测到架构: $ARCH${NC}"
 echo ""
 
+# Detect Kernel for XDP support / 检测内核支持 XDP
+# Requirement: Kernel >= 5.4 and x86_64 (musl eBPF support on aarch64 is tricky)
+KERNEL_VERSION=$(uname -r)
+KERNEL_MAJOR=$(echo $KERNEL_VERSION | cut -d. -f1)
+KERNEL_MINOR=$(echo $KERNEL_VERSION | cut -d. -f2)
+
+SUPPORT_XDP=false
+
+# Simple version check for >= 5.4
+if [ "$KERNEL_MAJOR" -gt 5 ]; then
+    SUPPORT_XDP=true
+elif [ "$KERNEL_MAJOR" -eq 5 ] && [ "$KERNEL_MINOR" -ge 4 ]; then
+    SUPPORT_XDP=true
+fi
+
+# Limit XDP to x86_64 for now
+if [ "$BINARY_ARCH" != "x86_64" ]; then
+    SUPPORT_XDP=false
+fi
+
+XDP_ARGS=""
+
+if [ "$SUPPORT_XDP" = true ]; then
+    echo -e "${GREEN}High-performance Kernel Detected / 检测到高性能内核: ${KERNEL_VERSION}${NC}"
+    echo -e "${GREEN}Enabling XDP Firewall Mode (Anti-Probe) / 启用 XDP 防火墙模式 (抗探测)${NC}"
+    # Use the XDP-enhanced binary
+    XRAY_BINARY_NAME="vless-server-linux-${BINARY_ARCH}-xdp"
+    # Find active interface for XDP
+    DEFAULT_IFACE=$(ip route get 8.8.8.8 | grep -oP 'dev \K\S+')
+    XDP_ARGS="--enable-xdp --xdp-iface ${DEFAULT_IFACE:-eth0}"
+else
+    echo -e "${YELLOW}Standard Kernel Detected / 检测到标准内核: ${KERNEL_VERSION}${NC}"
+    echo -e "${YELLOW}Using Standard Mode (Compatibility) / 使用标准模式 (兼容模式)${NC}"
+    XRAY_BINARY_NAME="vless-server-linux-${BINARY_ARCH}"
+fi
+echo ""
+
 # Stop existing service / 停止现有服务
 echo -e "${YELLOW}Checking for existing installation... / 检查现有安装...${NC}"
 if systemctl is-active --quiet xray-lite; then
@@ -79,7 +116,7 @@ echo ""
 # Download Static Binaries / 下载静态二进制文件
 echo -e "${YELLOW}[2/6] Downloading Xray-Lite binaries... / 下载 Xray-Lite 二进制文件...${NC}"
 
-XRAY_BINARY="vless-server-linux-${BINARY_ARCH}"
+XRAY_BINARY="${XRAY_BINARY_NAME}"
 KEYGEN_BINARY="keygen-linux-${BINARY_ARCH}"
 
 DOWNLOAD_PREFIX="https://github.com/${REPO}/releases/download/${VERSION}"
@@ -310,7 +347,7 @@ User=root
 Group=root
 Environment=RUST_LOG=info
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/vless-server --config $INSTALL_DIR/config.json
+ExecStart=$INSTALL_DIR/vless-server --config $INSTALL_DIR/config.json ${XDP_ARGS}
 Restart=on-failure
 RestartSec=10s
 
