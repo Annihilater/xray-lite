@@ -120,7 +120,7 @@ fn try_xdp_firewall(ctx: XdpContext) -> Result<u32, ()> {
             let handshake_type = unsafe { *((payload_start + 5) as *const u8) };
             if handshake_type == 1 {
                 // ClientHello Detected -> Valid TLS Handshake -> PASS
-                info!(&ctx, "TLS ClientHello allowed on port {}", dest_port);
+                info!(&ctx, "TLS ClientHello passed on port {}", dest_port);
                 return Ok(xdp_action::XDP_PASS);
             }
         }
