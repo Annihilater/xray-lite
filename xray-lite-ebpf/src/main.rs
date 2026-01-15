@@ -59,16 +59,16 @@ fn try_xdp_firewall(ctx: XdpContext) -> Result<u32, ()> {
     let start = ctx.data();
     let end = ctx.data_end();
 
-    // 1. Ethernet
-    let eth_hdr = unsafe { &*(start as *const EthHdr) };
+    // 1. Ethernet - CHECK BOUNDS FIRST
     if start + mem::size_of::<EthHdr>() > end {
         return Ok(xdp_action::XDP_PASS);
     }
+    let eth_hdr = unsafe { &*(start as *const EthHdr) };
     if eth_hdr.etype != u16::to_be(0x0800) {
         return Ok(xdp_action::XDP_PASS);
     }
 
-    // 2. IP
+    // 2. IP - CHECK BOUNDS FIRST
     let ip_start = start + mem::size_of::<EthHdr>();
     if ip_start + mem::size_of::<IpHdr>() > end {
         return Ok(xdp_action::XDP_PASS);
@@ -81,7 +81,7 @@ fn try_xdp_firewall(ctx: XdpContext) -> Result<u32, ()> {
     let ihl = ip_hdr.version_ihl & 0x0F;
     let ip_len = (ihl as usize) * 4;
 
-    // 3. TCP
+    // 3. TCP - CHECK BOUNDS FIRST
     let tcp_start = ip_start + ip_len;
     if tcp_start + mem::size_of::<TcpHdr>() > end {
         return Ok(xdp_action::XDP_PASS);
