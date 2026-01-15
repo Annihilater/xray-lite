@@ -133,14 +133,25 @@ fn try_xdp_firewall(ctx: XdpContext) -> Result<u32, ()> {
         return Ok(xdp_action::XDP_PASS);
     }
 
-    // If we are here, it means:
-    // 1. Packet has payload (len > 5)
-    // 2. It is NOT a valid TLS ClientHello (or at least first packet isn't)
-    // 3. It IS on a protected port
+    // Conservative approach: Only DROP obvious HTTP probes
+    // HTTP methods start with: G(ET), P(OST/UT/ATCH), H(EAD), D(ELETE), O(PTIONS), C(ONNECT), T(RACE)
+    // ASCII: G=0x47, P=0x50, H=0x48, D=0x44, O=0x4F, C=0x43, T=0x54
+    let is_http_probe = content_type == 0x47  // G
+        || content_type == 0x50  // P
+        || content_type == 0x48  // H
+        || content_type == 0x44  // D
+        || content_type == 0x4F  // O
+        || content_type == 0x43  // C
+        || content_type == 0x54; // T
 
-    // DROP IT!
-    warn!(&ctx, "⛔ Blocked suspicious packet on port {}", dest_port);
-    Ok(xdp_action::XDP_DROP)
+    if is_http_probe {
+        warn!(&ctx, "⛔ Blocked HTTP probe on port {}", dest_port);
+        return Ok(xdp_action::XDP_DROP);
+    }
+
+    // For any other unknown traffic, PASS through to let application layer handle it
+    // This is safer than aggressive DROP which can break legitimate connections
+    Ok(xdp_action::XDP_PASS)
 }
 
 #[panic_handler]
