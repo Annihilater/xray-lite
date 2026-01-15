@@ -2137,7 +2137,7 @@ dependencies = [
 
 [[package]]
 name = "xray-lite"
-version = "0.5.0-beta4"
+version = "0.5.0-beta5"
 dependencies = [
  "aes-gcm",
  "anyhow",

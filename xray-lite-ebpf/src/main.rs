@@ -114,16 +114,23 @@ fn try_xdp_firewall(ctx: XdpContext) -> Result<u32, ()> {
 
     let content_type = unsafe { *(payload_start as *const u8) };
 
-    // ContentType::Handshake is 22 (0x16)
-    if content_type == 0x16 {
-        if payload_start + 6 <= end {
+    // TLS Record Types:
+    // 0x14 = ChangeCipherSpec
+    // 0x15 = Alert
+    // 0x16 = Handshake
+    // 0x17 = ApplicationData
+    // 0x18 = Heartbeat
+    // If any of these, it's TLS -> PASS
+    if content_type >= 0x14 && content_type <= 0x18 {
+        // Valid TLS traffic -> PASS
+        // Only log ClientHello for debugging
+        if content_type == 0x16 && payload_start + 6 <= end {
             let handshake_type = unsafe { *((payload_start + 5) as *const u8) };
             if handshake_type == 1 {
-                // ClientHello Detected -> Valid TLS Handshake -> PASS
                 info!(&ctx, "TLS ClientHello passed on port {}", dest_port);
-                return Ok(xdp_action::XDP_PASS);
             }
         }
+        return Ok(xdp_action::XDP_PASS);
     }
 
     // If we are here, it means:
