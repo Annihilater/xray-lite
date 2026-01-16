@@ -38,15 +38,15 @@ bash <(curl -fsSL https://raw.githubusercontent.com/undead-undead/xray-lite/main
 > 
 > **Requirements**: Linux Kernel ≥ 5.4 (AMD64 only), Root privileges.
 
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/undead-undead/xray-lite/feature/dynamic-xdp/install.sh)
+```
+
 **New XDP Features / XDP 新特性:**
 *   🛡️ **XDP Firewall**: Kernel-level packet filtering using eBPF technology. / 基于 eBPF 技术的内核级数据包过滤防火墙。
 *   🛑 **Anti-DDoS**: Instantly drops **UDP Floods** and **Illegal TCP Packets** (e.g., Null Scan, SYN+FIN) at the NIC driver level. No CPU waste. / 在网卡驱动层直接丢弃 UDP 洪水攻击和非法 TCP 包，几乎不消耗 CPU。
 *   👻 **Ultimate Stealth**: XDP drops malicious probing packets silently (DROP), while standard Web traffic is allowed (PASS). / XDP 静默丢弃探测包（无法抓包），正常 Web 流量无感放行。
 *   🎭 **Smart Protection**: Only protects configured VLESS ports (e.g., 443), allowing other services (SSH) to work normally. / 仅保护配置的 VLESS 端口（如 443），不影响其他服务（如 SSH）。
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/undead-undead/xray-lite/feature/dynamic-xdp/install.sh)
-```
 
 The script will: / 脚本将自动：
 1. Detect Kernel & Architecture / 检测内核与架构
