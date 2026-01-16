@@ -80,13 +80,20 @@ if [ "$SUPPORT_XDP" = true ]; then
     echo -e "${GREEN}High-performance Kernel Detected / 检测到高性能内核: ${KERNEL_VERSION}${NC}"
     echo -e "${GREEN}Enabling XDP Firewall Mode (Anti-Probe) / 启用 XDP 防火墙模式 (抗探测)${NC}"
     # Use the XDP-enhanced binary
-    XRAY_BINARY_NAME="vless-server-linux-${BINARY_ARCH}-xdp"
     # Find active interface for XDP
     DEFAULT_IFACE=$(ip route get 8.8.8.8 | grep -oP 'dev \K\S+')
     XDP_ARGS="--enable-xdp --xdp-iface ${DEFAULT_IFACE:-eth0}"
 else
     echo -e "${YELLOW}Standard Kernel Detected / 检测到标准内核: ${KERNEL_VERSION}${NC}"
     echo -e "${YELLOW}Using Standard Mode (Compatibility) / 使用标准模式 (兼容模式)${NC}"
+fi
+
+# Use the static single binary for all cases (it contains XDP logic internally)
+# 使用静态单一二进制 (内部包含 XDP 逻辑)
+if [ "$BINARY_ARCH" = "amd64" ] || [ "$BINARY_ARCH" = "x86_64" ]; then
+    XRAY_BINARY_NAME="xray-linux-amd64"
+else
+    # Fallback for arm64 if we ever support it in static build
     XRAY_BINARY_NAME="vless-server-linux-${BINARY_ARCH}"
 fi
 echo ""
