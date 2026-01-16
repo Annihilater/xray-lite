@@ -54,9 +54,16 @@ pub mod loader {
                 return;
             }
 
+            // Try attach in default (Driver) mode first
             if let Err(e) = program.attach(&iface, XdpFlags::default()) {
-                error!("XDP 程序挂载到接口 {} 失败: {}", iface, e);
-                return;
+                warn!("XDP Native (Driver) attach failed: {}. Falling back to SKB (Generic) mode...", e);
+                // Fallback to SKB (Generic) mode
+                // Note: SKB mode is slower but works on almost all drivers/kernels
+                if let Err(e_skb) = program.attach(&iface, XdpFlags::SKB_MODE) {
+                    error!("XDP SKB (Generic) attach also failed: {}", e_skb);
+                    return;
+                }
+                info!("⚠️ Falling back to XDP SKB (Generic) mode. Performance might be reduced but still better than iptables.");
             }
 
             info!(
