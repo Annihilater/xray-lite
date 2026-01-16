@@ -99,58 +99,59 @@ fn try_xdp_firewall(ctx: XdpContext) -> Result<u32, ()> {
 
     // --- Protected Port Logic Below ---
 
+    // 1. TCP Flags Check (Anti-DoS)
+    let flags = tcp_hdr.flags;
+    // SYN+FIN is illegal
+    if (flags & 0x02 != 0) && (flags & 0x01 != 0) {
+        warn!(
+            &ctx,
+            "⛔ Blocked illegal TCP flags (SYN+FIN) on port {}", dest_port
+        );
+        return Ok(xdp_action::XDP_DROP);
+    }
+    // SYN+RST is illegal
+    if (flags & 0x02 != 0) && (flags & 0x04 != 0) {
+        warn!(
+            &ctx,
+            "⛔ Blocked illegal TCP flags (SYN+RST) on port {}", dest_port
+        );
+        return Ok(xdp_action::XDP_DROP);
+    }
+    // No flags set (Null scan)
+    if flags == 0 {
+        warn!(
+            &ctx,
+            "⛔ Blocked illegal TCP flags (NULL) on port {}", dest_port
+        );
+        return Ok(xdp_action::XDP_DROP);
+    }
+
     let doff = (tcp_hdr.res1 & 0xF0) >> 4;
     let tcp_len = (doff as usize) * 4;
 
-    // 4. TLS Deep Packet Inspection
+    // 2. TLS/HTTP Deep Packet Inspection
     let payload_start = tcp_start + tcp_len;
 
-    // Check minimal TLS header (5 bytes)
+    // Check bounds for payload
     if payload_start + 5 > end {
         // TCP packet without payload (ACK, SYN, FIN) -> PASS
-        // We must allow TCP handshake packets!
         return Ok(xdp_action::XDP_PASS);
     }
 
     let content_type = unsafe { *(payload_start as *const u8) };
 
-    // TLS Record Types:
-    // 0x14 = ChangeCipherSpec
-    // 0x15 = Alert
-    // 0x16 = Handshake
-    // 0x17 = ApplicationData
-    // 0x18 = Heartbeat
-    // If any of these, it's TLS -> PASS
-    if content_type >= 0x14 && content_type <= 0x18 {
-        // Valid TLS traffic -> PASS
-        // Only log ClientHello for debugging
-        if content_type == 0x16 && payload_start + 6 <= end {
-            let handshake_type = unsafe { *((payload_start + 5) as *const u8) };
-            if handshake_type == 1 {
-                info!(&ctx, "TLS ClientHello passed on port {}", dest_port);
-            }
+    // TLS Record Types: 0x14-0x18
+    // Log TLS ClientHello for debugging
+    if content_type == 0x16 && payload_start + 6 <= end {
+        let handshake_type = unsafe { *((payload_start + 5) as *const u8) };
+        if handshake_type == 1 {
+            info!(&ctx, "TLS ClientHello detected on port {}", dest_port);
         }
-        return Ok(xdp_action::XDP_PASS);
     }
 
-    // Conservative approach: Only DROP obvious HTTP probes
-    // HTTP methods start with: G(ET), P(OST/UT/ATCH), H(EAD), D(ELETE), O(PTIONS), C(ONNECT), T(RACE)
-    // ASCII: G=0x47, P=0x50, H=0x48, D=0x44, O=0x4F, C=0x43, T=0x54
-    let is_http_probe = content_type == 0x47  // G
-        || content_type == 0x50  // P
-        || content_type == 0x48  // H
-        || content_type == 0x44  // D
-        || content_type == 0x4F  // O
-        || content_type == 0x43  // C
-        || content_type == 0x54; // T
-
-    if is_http_probe {
-        warn!(&ctx, "⛔ Blocked HTTP probe on port {}", dest_port);
-        return Ok(xdp_action::XDP_DROP);
-    }
-
-    // For any other unknown traffic, PASS through to let application layer handle it
-    // This is safer than aggressive DROP which can break legitimate connections
+    // POLICY: PASS all application layer traffic (TLS and HTTP)
+    // Let Reality handle the camouflage (e.g., fallback to Cloudflare for HTTP)
+    // protecting against active probing by responding like a real website.
     Ok(xdp_action::XDP_PASS)
 }
 
