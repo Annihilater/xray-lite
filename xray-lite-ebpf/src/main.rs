@@ -89,7 +89,9 @@ fn try_xdp_firewall(ctx: XdpContext) -> Result<u32, ()> {
     match ip_hdr.protocol {
         // --- UDP HANDLING ---
         17 => {
-            // 🟡 DEBUG: Keep UDP PASS to isolate issue
+            // Passthrough UDP traffic to allow OS to respond with ICMP Port Unreachable
+            // This is crucial for QUIC/HTTP3 clients (like Twitter) to fail fast and fallback to TCP.
+            // Dropping packets silently causes clients to hang/timeout.
             return Ok(xdp_action::XDP_PASS);
         }
         // --- TCP HANDLING ---
