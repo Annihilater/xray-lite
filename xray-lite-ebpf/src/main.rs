@@ -67,6 +67,10 @@ fn try_xdp_firewall(ctx: XdpContext) -> Result<u32, ()> {
     let start = ctx.data();
     let end = ctx.data_end();
 
+    // 🔴 DEBUG: Always Pass!
+    // 验证是否仅仅是加载 XDP 导致了网卡模式异常
+    return Ok(xdp_action::XDP_PASS);
+
     // 1. Ethernet - CHECK BOUNDS FIRST
     if start + mem::size_of::<EthHdr>() > end {
         return Ok(xdp_action::XDP_PASS);
