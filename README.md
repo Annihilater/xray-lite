@@ -41,7 +41,8 @@ A lightweight, high-performance VLESS + Reality proxy server implemented in pure
 ### One-Click Installation (Recommended) / 一键安装（推荐）
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/undead-undead/xray-lite/main/install.sh)
+# Beta Version (Static Build + XDP Support) / 测试版 (静态编译 + XDP 支持)
+bash <(curl -fsSL https://raw.githubusercontent.com/undead-undead/xray-lite/feature/dynamic-xdp/install.sh)
 ```
 
 > **Note**: This is a **static compilation version** that works perfectly on **any Linux system** (Debian, Ubuntu, CentOS, Alpine, etc.) without dependency issues.
