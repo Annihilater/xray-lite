@@ -38,7 +38,11 @@ A lightweight, high-performance VLESS + Reality proxy server implemented in pure
 
 ## 🚀 Quick Start / 快速开始
 
-### One-Click Installation (Recommended) / 一键安装（推荐）
+### 1. One-Click Installation (Stable) / 一键安装（稳定版）
+
+> **Current Version: v0.4.6**
+>
+> 适用于生产环境，稳定可靠，兼容所有 Linux 系统。
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/undead-undead/xray-lite/main/install.sh)
@@ -48,14 +52,29 @@ bash <(curl -fsSL https://raw.githubusercontent.com/undead-undead/xray-lite/main
 >
 > **注意**：此为**静态编译版本**，完美适配**任何 Linux 系统** (Debian, Ubuntu, CentOS, Alpine 等)，无需担心依赖问题。
 
-The script will: / 脚本将自动：
-1. Download the latest binary / 下载最新二进制文件
-2. Generate keys and UUID / 生成密钥和 UUID
-3. Configure systemd service / 配置 systemd 服务
-4. Start the server / 启动服务器
-5. Display connection info / 显示连接信息
+### 2. Beta Installation (XDP Enhanced) / 测试版安装（XDP 增强版）
 
-### Build from Source / 从源码构建
+> **Current Version: v0.5.0-rc4**
+> 
+> **Requirements**: Linux Kernel ≥ 5.4 (AMD64 only), Root privileges.
+
+**New XDP Features / XDP 新特性:**
+*   🛡️ **XDP Firewall**: Kernel-level packet filtering using eBPF technology. / 基于 eBPF 技术的内核级数据包过滤防火墙。
+*   🛑 **Anti-DDoS**: Instantly drops **UDP Floods** and **Illegal TCP Packets** (e.g., Null Scan, SYN+FIN) at the NIC driver level. No CPU waste. / 在网卡驱动层直接丢弃 UDP 洪水攻击和非法 TCP 包，几乎不消耗 CPU。
+*   👻 **Ultimate Stealth**: XDP drops malicious probing packets silently (DROP), while standard Web traffic is allowed (PASS). / XDP 静默丢弃探测包（无法抓包），正常 Web 流量无感放行。
+*   🎭 **Smart Protection**: Only protects configured VLESS ports (e.g., 443), allowing other services (SSH) to work normally. / 仅保护配置的 VLESS 端口（如 443），不影响其他服务（如 SSH）。
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/undead-undead/xray-lite/feature/dynamic-xdp/install.sh)
+```
+
+The script will: / 脚本将自动：
+1. Detect Kernel & Architecture / 检测内核与架构
+2. Download optimized XDP binary / 下载 XDP 优化版二进制
+3. Auto-attach XDP program to NIC / 自动挂载 XDP 程序到网卡
+4. Generate keys and start service / 生成密钥并启动服务
+
+### 3. Build from Source / 从源码构建
 
 ```bash
 # Clone the repository / 克隆仓库
