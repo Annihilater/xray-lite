@@ -32,9 +32,9 @@ bash <(curl -fsSL https://raw.githubusercontent.com/undead-undead/xray-lite/main
 >
 > **注意**：此为**静态编译版本**，完美适配**任何 Linux 系统** (Debian, Ubuntu, CentOS, Alpine 等)，无需担心依赖问题。
 
-### 2. Beta Installation (XDP Enhanced) / 测试版安装（XDP 增强版）
+### 2. XDP Installation (Performance Enhanced) / XDP 版安装（性能增强版）
 
-> **Current Version: v0.5.0-rc4**
+> **Current Version: v0.5.0 (Stable)**
 > 
 > **Requirements**: Linux Kernel ≥ 5.4 (AMD64 only), Root privileges.
 
@@ -43,8 +43,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/undead-undead/xray-lite/feat
 ```
 
 **New XDP Features / XDP 新特性:**
-*   🛡️ **XDP Firewall**: Kernel-level packet filtering using eBPF technology. / 基于 eBPF 技术的内核级数据包过滤防火墙。
-*   🛑 **Anti-DDoS**: Instantly drops **UDP Floods** and **Illegal TCP Packets** (e.g., Null Scan, SYN+FIN) at the NIC driver level. No CPU waste. / 在网卡驱动层直接丢弃 UDP 洪水攻击和非法 TCP 包，几乎不消耗 CPU。
+*   🛡️ **XDP Firewall**: Kernel-level protection against TCP SYN Floods and Illegal Flags. / 基于 eBPF 技术的内核级 TCP SYN 洪水和非法标志防御。
+*   🛑 **Anti-Probe**: Instantly drops **Illegal TCP Packets** (e.g., Null Scan, SYN+FIN) at the NIC driver level. UDP is passed through to support QUIC/HTTP3. / 在网卡驱动层直接丢弃非法 TCP 包，几乎不消耗 CPU。（UDP 流量放行以支持 QUIC/HTTP3）。
 *   👻 **Ultimate Stealth**: XDP drops malicious probing packets silently (DROP), while standard Web traffic is allowed (PASS). / XDP 静默丢弃探测包（无法抓包），正常 Web 流量无感放行。
 *   🎭 **Smart Protection**: Only protects configured VLESS ports (e.g., 443), allowing other services (SSH) to work normally. / 仅保护配置的 VLESS 端口（如 443），不影响其他服务（如 SSH）。
 
