@@ -10,9 +10,9 @@
 >
 > **⚠️ 警告：本项目禁止商业用途，仅供学习交流使用。**
 
-A lightweight, high-performance VLESS + Reality proxy server implemented in pure Rust. Fully compatible with all Xray/V2Ray clients.
+A lightweight, high-performance VLESS + Reality + XHTTP proxy server implemented in pure Rust. Fully compatible with all Xray/V2Ray clients.
 
-一个轻量级、高性能的纯 Rust 实现的 VLESS + Reality 代理服务器。完全兼容所有 Xray/V2Ray 客户端。
+一个轻量级、高性能的纯 Rust 实现的 VLESS + Reality + XHTTP 代理服务器。完全兼容所有 Xray/V2Ray 客户端。
 
 ---
 
