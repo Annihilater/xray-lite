@@ -47,6 +47,14 @@ pub struct TcpHdr {
     pub urg_ptr: u16,
 }
 
+#[repr(C)]
+pub struct UdpHdr {
+    pub source: u16,
+    pub dest: u16,
+    pub len: u16,
+    pub check: u16,
+}
+
 #[xdp]
 pub fn xdp_firewall(ctx: XdpContext) -> u32 {
     match try_xdp_firewall(ctx) {
@@ -74,85 +82,101 @@ fn try_xdp_firewall(ctx: XdpContext) -> Result<u32, ()> {
         return Ok(xdp_action::XDP_PASS);
     }
     let ip_hdr = unsafe { &*(ip_start as *const IpHdr) };
-    if ip_hdr.protocol != 6 {
-        return Ok(xdp_action::XDP_PASS);
-    }
 
     let ihl = ip_hdr.version_ihl & 0x0F;
     let ip_len = (ihl as usize) * 4;
+    let trans_start = ip_start + ip_len;
 
-    // 3. TCP - CHECK BOUNDS FIRST
-    let tcp_start = ip_start + ip_len;
-    if tcp_start + mem::size_of::<TcpHdr>() > end {
-        return Ok(xdp_action::XDP_PASS);
-    }
-    let tcp_hdr = unsafe { &*(tcp_start as *const TcpHdr) };
+    // PROTOCOL DISPATCH
+    // Check protocol: TCP=6, UDP=17
+    match ip_hdr.protocol {
+        // --- UDP HANDLING ---
+        17 => {
+            // Check bounds for UDP Header
+            if trans_start + mem::size_of::<UdpHdr>() > end {
+                return Ok(xdp_action::XDP_PASS);
+            }
+            let udp_hdr = unsafe { &*(trans_start as *const UdpHdr) };
+            let dest_port = u16::from_be(udp_hdr.dest);
 
-    // Check if port is protected
-    let dest_port = u16::from_be(tcp_hdr.dest);
-
-    // Lookup in HashMap. If key exists, it returns Some(&value).
-    if unsafe { ALLOWED_PORTS.get(&dest_port).is_none() } {
-        // Port not in protection list -> PASS
-        return Ok(xdp_action::XDP_PASS);
-    }
-
-    // --- Protected Port Logic Below ---
-
-    // 1. TCP Flags Check (Anti-DoS)
-    let flags = tcp_hdr.flags;
-    // SYN+FIN is illegal
-    if (flags & 0x02 != 0) && (flags & 0x01 != 0) {
-        warn!(
-            &ctx,
-            "⛔ Blocked illegal TCP flags (SYN+FIN) on port {}", dest_port
-        );
-        return Ok(xdp_action::XDP_DROP);
-    }
-    // SYN+RST is illegal
-    if (flags & 0x02 != 0) && (flags & 0x04 != 0) {
-        warn!(
-            &ctx,
-            "⛔ Blocked illegal TCP flags (SYN+RST) on port {}", dest_port
-        );
-        return Ok(xdp_action::XDP_DROP);
-    }
-    // No flags set (Null scan)
-    if flags == 0 {
-        warn!(
-            &ctx,
-            "⛔ Blocked illegal TCP flags (NULL) on port {}", dest_port
-        );
-        return Ok(xdp_action::XDP_DROP);
-    }
-
-    let doff = (tcp_hdr.res1 & 0xF0) >> 4;
-    let tcp_len = (doff as usize) * 4;
-
-    // 2. TLS/HTTP Deep Packet Inspection
-    let payload_start = tcp_start + tcp_len;
-
-    // Check bounds for payload
-    if payload_start + 5 > end {
-        // TCP packet without payload (ACK, SYN, FIN) -> PASS
-        return Ok(xdp_action::XDP_PASS);
-    }
-
-    let content_type = unsafe { *(payload_start as *const u8) };
-
-    // TLS Record Types: 0x14-0x18
-    // Log TLS ClientHello for debugging
-    if content_type == 0x16 && payload_start + 6 <= end {
-        let handshake_type = unsafe { *((payload_start + 5) as *const u8) };
-        if handshake_type == 1 {
-            info!(&ctx, "TLS ClientHello detected on port {}", dest_port);
+            // Check if port is protected
+            if unsafe { ALLOWED_PORTS.get(&dest_port).is_some() } {
+                // DROP all UDP traffic on protected ports (Anti-UDP Flood)
+                warn!(&ctx, "⛔ Blocked UDP flood on protected port {}", dest_port);
+                return Ok(xdp_action::XDP_DROP);
+            }
+            return Ok(xdp_action::XDP_PASS);
         }
-    }
+        // --- TCP HANDLING ---
+        6 => {
+            // Check bounds for TCP Header
+            if trans_start + mem::size_of::<TcpHdr>() > end {
+                return Ok(xdp_action::XDP_PASS);
+            }
+            let tcp_hdr = unsafe { &*(trans_start as *const TcpHdr) };
+            let dest_port = u16::from_be(tcp_hdr.dest);
 
-    // POLICY: PASS all application layer traffic (TLS and HTTP)
-    // Let Reality handle the camouflage (e.g., fallback to Cloudflare for HTTP)
-    // protecting against active probing by responding like a real website.
-    Ok(xdp_action::XDP_PASS)
+            // Check if port is protected
+            if unsafe { ALLOWED_PORTS.get(&dest_port).is_none() } {
+                return Ok(xdp_action::XDP_PASS);
+            }
+
+            // --- Protected Port Logic (TCP) ---
+
+            // 1. TCP Flags Check (Anti-DoS)
+            let flags = tcp_hdr.flags;
+            // SYN+FIN is illegal
+            if (flags & 0x02 != 0) && (flags & 0x01 != 0) {
+                warn!(
+                    &ctx,
+                    "⛔ Blocked illegal TCP flags (SYN+FIN) on port {}", dest_port
+                );
+                return Ok(xdp_action::XDP_DROP);
+            }
+            // SYN+RST is illegal
+            if (flags & 0x02 != 0) && (flags & 0x04 != 0) {
+                warn!(
+                    &ctx,
+                    "⛔ Blocked illegal TCP flags (SYN+RST) on port {}", dest_port
+                );
+                return Ok(xdp_action::XDP_DROP);
+            }
+            // No flags set (Null scan)
+            if flags == 0 {
+                warn!(
+                    &ctx,
+                    "⛔ Blocked illegal TCP flags (NULL) on port {}", dest_port
+                );
+                return Ok(xdp_action::XDP_DROP);
+            }
+
+            let doff = (tcp_hdr.res1 & 0xF0) >> 4;
+            let tcp_len = (doff as usize) * 4;
+
+            // 2. TLS/HTTP Deep Packet Inspection
+            let payload_start = trans_start + tcp_len;
+
+            // Check bounds for payload min size
+            if payload_start + 5 > end {
+                return Ok(xdp_action::XDP_PASS);
+            }
+
+            let content_type = unsafe { *(payload_start as *const u8) };
+
+            // Log TLS ClientHello for debugging
+            if content_type == 0x16 && payload_start + 6 <= end {
+                let handshake_type = unsafe { *((payload_start + 5) as *const u8) };
+                if handshake_type == 1 {
+                    info!(&ctx, "TLS ClientHello detected on port {}", dest_port);
+                }
+            }
+
+            // PASS all application layer traffic to Reality
+            return Ok(xdp_action::XDP_PASS);
+        }
+        // --- OTHER PROTOCOLS (ICMP, etc.) ---
+        _ => return Ok(xdp_action::XDP_PASS),
+    }
 }
 
 #[panic_handler]
