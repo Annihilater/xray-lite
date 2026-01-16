@@ -16,26 +16,6 @@ A lightweight, high-performance VLESS + Reality proxy server implemented in pure
 
 ---
 
-## ✨ Features / 特性
-
-| Feature / 特性 | Status / 状态 | Description / 描述 |
-|---------------|---------------|---------------------|
-| **VLESS Protocol** | ✅ Stable | Full VLESS protocol support / 完整 VLESS 协议支持 |
-| **VLESS UDP** | ✅ Stable | UDP over TCP support / UDP over TCP 支持 |
-| **Reality** | ✅ Stable | TLS 1.3 with dynamic certificate / TLS 1.3 动态证书 |
-| **SNI Sniffing** | ✅ Stable | Auto-detect target domain / 自动嗅探目标域名 |
-| **XHTTP (NEW)** | ✅ Universal | Integrates: **<span style="color:red">H2 Ping-Pong</span>**, **<span style="color:red">Traffic Shaping</span>**, **<span style="color:red">Chameleon Headers</span>** |
-
-### Why Xray-Lite? / 为什么选择 Xray-Lite？
-
-- 🚀 **High Performance / 高性能**: Built on Tokio async runtime / 基于 Tokio 异步运行时
-- 🪶 **Lightweight / 轻量级**: ~1.5MB binary, ~10MB RAM / 约 1.5MB 二进制文件，约 10MB 内存
-- 🛡️ **Intelligent Adaptive / 智能自适应**: Auto-pairing XHTTP Split-Streams for mobile clients / 自动焊接移动端分离流
-- 🔒 **Secure / 安全**: Reality protocol resists active probing / Reality 协议抵抗主动探测
-- ✅ **Compatible / 兼容**: Works with v2rayN, Shadowrocket, Xray-core, etc. / 兼容所有主流客户端
-
----
-
 ## 🚀 Quick Start / 快速开始
 
 ### 1. One-Click Installation (Stable) / 一键安装（稳定版）
@@ -87,6 +67,26 @@ cargo build --release
 # Run / 运行
 ./target/release/vless-server --config config.json
 ```
+
+---
+
+## ✨ Features / 特性
+
+| Feature / 特性 | Status / 状态 | Description / 描述 |
+|---------------|---------------|---------------------|
+| **VLESS Protocol** | ✅ Stable | Full VLESS protocol support / 完整 VLESS 协议支持 |
+| **VLESS UDP** | ✅ Stable | UDP over TCP support / UDP over TCP 支持 |
+| **Reality** | ✅ Stable | TLS 1.3 with dynamic certificate / TLS 1.3 动态证书 |
+| **SNI Sniffing** | ✅ Stable | Auto-detect target domain / 自动嗅探目标域名 |
+| **XHTTP (NEW)** | ✅ Universal | Integrates: **<span style="color:red">H2 Ping-Pong</span>**, **<span style="color:red">Traffic Shaping</span>**, **<span style="color:red">Chameleon Headers</span>** |
+
+### Why Xray-Lite? / 为什么选择 Xray-Lite？
+
+- 🚀 **High Performance / 高性能**: Built on Tokio async runtime / 基于 Tokio 异步运行时
+- 🪶 **Lightweight / 轻量级**: ~1.5MB binary, ~10MB RAM / 约 1.5MB 二进制文件，约 10MB 内存
+- 🛡️ **Intelligent Adaptive / 智能自适应**: Auto-pairing XHTTP Split-Streams for mobile clients / 自动焊接移动端分离流
+- 🔒 **Secure / 安全**: Reality protocol resists active probing / Reality 协议抵抗主动探测
+- ✅ **Compatible / 兼容**: Works with v2rayN, Shadowrocket, Xray-core, etc. / 兼容所有主流客户端
 
 ---
 
