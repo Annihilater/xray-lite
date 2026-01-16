@@ -64,13 +64,6 @@ pub fn xdp_firewall(ctx: XdpContext) -> u32 {
 }
 
 fn try_xdp_firewall(ctx: XdpContext) -> Result<u32, ()> {
-    let start = ctx.data();
-    let end = ctx.data_end();
-
-    // 🔴 DEBUG: Always Pass!
-    // 验证是否仅仅是加载 XDP 导致了网卡模式异常
-    return Ok(xdp_action::XDP_PASS);
-
     // 1. Ethernet - CHECK BOUNDS FIRST
     if start + mem::size_of::<EthHdr>() > end {
         return Ok(xdp_action::XDP_PASS);
@@ -96,19 +89,7 @@ fn try_xdp_firewall(ctx: XdpContext) -> Result<u32, ()> {
     match ip_hdr.protocol {
         // --- UDP HANDLING ---
         17 => {
-            // Check bounds for UDP Header
-            if trans_start + mem::size_of::<UdpHdr>() > end {
-                return Ok(xdp_action::XDP_PASS);
-            }
-            let udp_hdr = unsafe { &*(trans_start as *const UdpHdr) };
-            let dest_port = u16::from_be(udp_hdr.dest);
-
-            // Check if port is protected
-            if unsafe { ALLOWED_PORTS.get(&dest_port).is_some() } {
-                // DROP all UDP traffic on protected ports (Anti-UDP Flood)
-                warn!(&ctx, "⛔ Blocked UDP flood on protected port {}", dest_port);
-                return Ok(xdp_action::XDP_DROP);
-            }
+            // 🟡 DEBUG: Keep UDP PASS to isolate issue
             return Ok(xdp_action::XDP_PASS);
         }
         // --- TCP HANDLING ---
