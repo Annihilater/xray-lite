@@ -89,9 +89,19 @@ fn try_xdp_firewall(ctx: XdpContext) -> Result<u32, ()> {
     match ip_hdr.protocol {
         // --- UDP HANDLING ---
         17 => {
-            // Passthrough UDP traffic to allow OS to respond with ICMP Port Unreachable
-            // This is crucial for QUIC/HTTP3 clients (like Twitter) to fail fast and fallback to TCP.
-            // Dropping packets silently causes clients to hang/timeout.
+            // Check bounds for UDP Header
+            if trans_start + mem::size_of::<UdpHdr>() > end {
+                return Ok(xdp_action::XDP_PASS);
+            }
+            let udp_hdr = unsafe { &*(trans_start as *const UdpHdr) };
+            let dest_port = u16::from_be(udp_hdr.dest);
+
+            // Check if port is protected
+            if unsafe { ALLOWED_PORTS.get(&dest_port).is_some() } {
+                // DROP all UDP traffic on protected ports (Anti-UDP Flood)
+                // This is the rc6 logic we are re-testing.
+                return Ok(xdp_action::XDP_DROP);
+            }
             return Ok(xdp_action::XDP_PASS);
         }
         // --- TCP HANDLING ---
