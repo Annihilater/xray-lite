@@ -54,7 +54,7 @@ fn main() -> Result<()> {
         // Local-thread initialization for monoio with timer enabled
         let mut rt = monoio::RuntimeBuilder::<monoio::IoUringDriver>::new()
             .enable_timer() // Important: Enable timer!
-            .with_entries(1024)
+            .with_entries(32768) // Optimized for high concurrency
             .build()
             .unwrap();
 

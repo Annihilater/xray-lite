@@ -352,7 +352,19 @@ impl H2Handler {
         let (to_vless_tx, mut to_vless_rx) = mpsc::unbounded_channel::<Bytes>();
         let notify = Arc::new(Notify::new());
         
+        // RAII Guard cleanup
+        struct SessionGuard(String);
+        impl Drop for SessionGuard {
+            fn drop(&mut self) {
+                if SESSIONS.contains_key(&self.0) {
+                     SESSIONS.remove(&self.0);
+                     debug!("Session cleaned up: {}", self.0);
+                }
+            }
+        }
+
         SESSIONS.insert(path.clone(), Session { to_vless_tx, notify: notify.clone() });
+        let _guard = SessionGuard(path.clone());
 
         let (client_io, server_io) = tokio::io::duplex(65536);
         crate::utils::task::spawn(async move {
@@ -404,7 +416,6 @@ impl H2Handler {
         });
         let _ = downstream.await;
         
-        SESSIONS.remove(&path);
         notify.notify_waiters();
         Ok(())
     }
