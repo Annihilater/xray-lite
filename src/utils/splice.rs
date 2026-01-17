@@ -1,17 +1,16 @@
 use std::io;
 use std::os::fd::RawFd;
+use crate::utils::net::MaybeAsRawFd;
 
-#[allow(dead_code)]
-pub struct SpliceGate {
+pub struct AsyncSplice {
     pipe_read: RawFd,
     pipe_write: RawFd,
 }
 
-#[allow(dead_code)]
-impl SpliceGate {
+impl AsyncSplice {
     pub fn new() -> io::Result<Self> {
         let mut fds = [0i32; 2];
-        let res = unsafe { libc::pipe(fds.as_mut_ptr()) };
+        let res = unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_NONBLOCK) };
         if res < 0 {
             return Err(io::Error::last_os_error());
         }
@@ -21,51 +20,69 @@ impl SpliceGate {
         })
     }
 
-    pub fn relay(&self, src: RawFd, dst: RawFd, len: usize) -> io::Result<usize> {
-        let flags = libc::SPLICE_F_MOVE | libc::SPLICE_F_NONBLOCK;
+    pub async fn transfer<S: MaybeAsRawFd, D: MaybeAsRawFd>(
+        &self,
+        src: &S,
+        dst: &D,
+    ) -> io::Result<u64> {
+        let mut total = 0;
+        let s_fd = src.maybe_as_raw_fd().ok_or_else(|| io::Error::new(io::ErrorKind::Other, "No Src FD"))?;
+        let d_fd = dst.maybe_as_raw_fd().ok_or_else(|| io::Error::new(io::ErrorKind::Other, "No Dst FD"))?;
 
-        // Splice from src to pipe
-        let n = unsafe {
-            libc::splice(
-                src,
-                std::ptr::null_mut(),
-                self.pipe_write,
-                std::ptr::null_mut(),
-                len,
-                flags,
-            )
-        };
+        loop {
+            let n = unsafe {
+                libc::splice(
+                    s_fd,
+                    std::ptr::null_mut(),
+                    self.pipe_write,
+                    std::ptr::null_mut(),
+                    128 * 1024,
+                    libc::SPLICE_F_MOVE | libc::SPLICE_F_NONBLOCK,
+                )
+            };
 
-        if n < 0 {
-            return Err(io::Error::last_os_error());
+            if n < 0 {
+                let err = io::Error::last_os_error();
+                if err.kind() == io::ErrorKind::WouldBlock {
+                    tokio::task::yield_now().await;
+                    continue;
+                }
+                return Err(err);
+            }
+
+            if n == 0 { break; } 
+
+            let mut remaining = n as usize;
+            while remaining > 0 {
+                let m = unsafe {
+                    libc::splice(
+                        self.pipe_read,
+                        std::ptr::null_mut(),
+                        d_fd,
+                        std::ptr::null_mut(),
+                        remaining,
+                        libc::SPLICE_F_MOVE | libc::SPLICE_F_NONBLOCK,
+                    )
+                };
+
+                if m < 0 {
+                    let err = io::Error::last_os_error();
+                    if err.kind() == io::ErrorKind::WouldBlock {
+                        tokio::task::yield_now().await;
+                        continue;
+                    }
+                    return Err(err);
+                }
+                
+                remaining -= m as usize;
+                total += m as u64;
+            }
         }
-
-        let n = n as usize;
-        if n == 0 {
-            return Ok(0);
-        }
-
-        // Splice from pipe to dst
-        let m = unsafe {
-            libc::splice(
-                self.pipe_read,
-                std::ptr::null_mut(),
-                dst,
-                std::ptr::null_mut(),
-                n,
-                flags,
-            )
-        };
-
-        if m < 0 {
-            return Err(io::Error::last_os_error());
-        }
-
-        Ok(m as usize)
+        Ok(total)
     }
 }
 
-impl Drop for SpliceGate {
+impl Drop for AsyncSplice {
     fn drop(&mut self) {
         unsafe {
             libc::close(self.pipe_read);

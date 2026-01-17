@@ -2,9 +2,7 @@ use std::sync::Mutex;
 use once_cell::sync::Lazy;
 use anyhow::Result;
 use crate::utils::net::DualTcpStream;
-use crate::utils::splice::SpliceGate;
-use tokio::net::TcpStream;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::{debug, error};
 
 const BUFFER_SIZE: usize = 16 * 1024;
@@ -66,31 +64,9 @@ where
             remote_stream,
         }
     }
-
     /// 双向数据转发
     pub async fn relay(mut self) -> Result<()> {
-        use crate::utils::net::MaybeAsRawFd;
-        let c_fd = self.client_stream.maybe_as_raw_fd();
-        let r_fd = self.remote_stream.maybe_as_raw_fd();
-
-        debug!("开启双向数据转发 (FDs: {:?} <-> {:?})", c_fd, r_fd);
-
-        // 我们尝试在后台开启两个方向的转发任务
-        // 如果底层支持 splice (即都是 raw socket)，我们将获得极佳的性能
-        
-        let (mut c_read, mut c_write) = tokio::io::split(self.client_stream);
-        let (mut r_read, mut r_write) = tokio::io::split(self.remote_stream);
-
-        let client_to_remote = async move {
-            tokio::io::copy(&mut c_read, &mut r_write).await
-        };
-
-        let remote_to_client = async move {
-            tokio::io::copy(&mut r_read, &mut c_write).await
-        };
-
-        // 使用 join 并行处理
-        match tokio::try_join!(client_to_remote, remote_to_client) {
+        match tokio::io::copy_bidirectional(&mut self.client_stream, &mut self.remote_stream).await {
             Ok((c_to_r, r_to_c)) => {
                 debug!("连接正常关闭: C->R {} bytes, R->C {} bytes", c_to_r, r_to_c);
                 Ok(())

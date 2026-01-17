@@ -136,3 +136,11 @@ impl<T: MaybeAsRawFd + ?Sized> MaybeAsRawFd for Box<T> {
         (**self).maybe_as_raw_fd()
     }
 }
+
+impl<S> MaybeAsRawFd for tokio::io::ReadHalf<S> {
+    fn maybe_as_raw_fd(&self) -> Option<RawFd> { None }
+}
+
+impl<S> MaybeAsRawFd for tokio::io::WriteHalf<S> {
+    fn maybe_as_raw_fd(&self) -> Option<RawFd> { None }
+}
