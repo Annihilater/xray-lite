@@ -111,9 +111,13 @@ impl UringServer {
 
                     monoio::spawn(async move {
                         use std::os::fd::AsRawFd;
+                        use monoio_compat::StreamWrapper;
                         let fd = stream.as_raw_fd();
-                        let compat_stream = TcpStreamCompat::new(stream);
+                        // 关键优化：使用 128KB 缓冲区代替默认的 8KB
+                        // 减少 io_uring 提交次数 16 倍，大幅降低单核 CPU 开销
+                        let compat_stream = StreamWrapper::new_with_buffer_size(stream, 128 * 1024, 128 * 1024);
                         let dual_stream = crate::utils::net::DualTcpStream::Monoio(compat_stream, fd);
+
                         
                         if let Err(e) = Server::handle_client(
                             Box::new(dual_stream),

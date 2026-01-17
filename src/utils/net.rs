@@ -54,7 +54,8 @@ impl DualTcpStream {
             RuntimeMode::Monoio => {
                 let stream = monoio::net::TcpStream::connect(addr).await?;
                 let fd = stream.as_raw_fd();
-                let compat = monoio_compat::TcpStreamCompat::new(stream);
+                // 关键优化：使用 128KB 缓冲区
+                let compat = monoio_compat::StreamWrapper::new_with_buffer_size(stream, 128 * 1024, 128 * 1024);
                 Ok(Self::Monoio(compat, fd))
             }
         }
