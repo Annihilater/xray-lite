@@ -15,6 +15,9 @@ xdp = ["dep:aya", "dep:aya-log", "dep:env_logger"]
 # 异步运行时
 tokio = { version = "1.35", features = ["full"] }
 tokio-util = { version = "0.7", features = ["codec"] }
+monoio = { version = "0.2", features = ["iouring"] }
+monoio-compat = "0.2"
+nix = { version = "0.27", features = ["fs", "ioctl", "process", "signal", "time", "event", "mman"] }
 
 
 # TLS

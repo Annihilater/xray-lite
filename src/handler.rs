@@ -16,7 +16,8 @@ pub async fn serve_vless(
     // Optimize: 增大缓冲区至 16KB 以减少系统调用，提升高吞吐场景性能
     let mut buf = bytes::BytesMut::with_capacity(16384);
     use tokio::io::AsyncReadExt;
-    use tokio::time::{timeout, Duration};
+    use std::time::Duration;
+    use crate::utils::timer::timeout;
     
     // 第一次读取，5秒超时
     let read_result = timeout(Duration::from_secs(30), stream.read_buf(&mut buf)).await;
@@ -109,7 +110,7 @@ pub async fn serve_vless(
             info!("🔗 连接目标: {}", target_address);
             
             // 连接远程服务器
-            let mut remote_stream = match tokio::net::TcpStream::connect(&target_address).await {
+            let mut remote_stream = match crate::utils::net::DualTcpStream::connect(&target_address).await {
                 Ok(s) => s,
                 Err(e) => {
                     error!("无法连接到目标 {}: {}", target_address, e);

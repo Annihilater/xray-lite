@@ -11,6 +11,7 @@ mod transport;
 mod utils;
 mod handler;
 mod xdp;
+mod server_uring;
 
 use crate::config::Config;
 use crate::server::Server;
@@ -37,11 +38,35 @@ struct Args {
     /// XDP 绑定的网卡接口 (e.g., eth0)
     #[arg(long, default_value = "eth0")]
     xdp_iface: String,
+
+    /// 启用 io_uring 高性能运行时 (Linux 5.10+)
+    #[arg(long, default_value_t = false)]
+    uring: bool,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let args = Args::parse();
+    
+    if args.uring {
+        info!("⚡ Using io_uring runtime (monoio)");
+        use crate::utils::task::{set_runtime_mode, RuntimeMode};
+        // Local-thread initialization for monoio
+        monoio::start::<monoio::IoUringDriver, _>(async move {
+            set_runtime_mode(RuntimeMode::Monoio);
+            async_main(args).await
+        })
+    } else {
+        info!("🧵 Using standard tokio runtime");
+        use crate::utils::task::{set_runtime_mode, RuntimeMode};
+        let rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(async move {
+            set_runtime_mode(RuntimeMode::Tokio);
+            async_main(args).await
+        })
+    }
+}
+
+async fn async_main(args: Args) -> Result<()> {
 
     // 初始化日志
     // 优先使用环境变量 RUST_LOG，否则使用命令行参数
@@ -94,12 +119,15 @@ async fn main() -> Result<()> {
         }
     }
 
-    // 4. Initialize and run server
-    let server = Server::new(config)?;
-    info!("🌐 Server initialized");
-
     // 运行服务器
-    server.run().await?;
+    if args.uring {
+        use crate::server_uring::UringServer;
+        let server = UringServer::new(config)?;
+        server.run().await?;
+    } else {
+        let server = Server::new(config)?;
+        server.run().await?;
+    }
 
     Ok(())
 }

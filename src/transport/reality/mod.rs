@@ -7,11 +7,7 @@ mod server;
 pub mod stream;
 mod tls;
 
-pub use auth::{RealityAuth, ServerHelloModifier};
-pub use cert_fetch::fetch_certificate;
-pub use handshake::RealityHandshake;
 pub use server::RealityServer;
-pub use tls::{ClientHello, ServerHello, TlsRecord};
 
 use serde::{Deserialize, Serialize};
 

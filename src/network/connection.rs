@@ -1,6 +1,7 @@
 use std::sync::Mutex;
 use once_cell::sync::Lazy;
 use anyhow::Result;
+use crate::utils::net::DualTcpStream;
 use tokio::net::TcpStream;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, error};
@@ -54,8 +55,8 @@ pub struct ProxyConnection<C, R> {
 
 impl<C, R> ProxyConnection<C, R> 
 where 
-    C: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-    R: AsyncRead + AsyncWrite + Unpin + Send + 'static
+    C: AsyncRead + AsyncWrite + Unpin + 'static,
+    R: AsyncRead + AsyncWrite + Unpin + 'static
 {
     /// 创建新的代理连接
     pub fn new(client_stream: C, remote_stream: R) -> Self {
@@ -71,6 +72,10 @@ where
 
         let (mut c_r, mut c_w) = tokio::io::split(self.client_stream);
         let (mut r_r, mut r_w) = tokio::io::split(self.remote_stream);
+
+        // TODO OPTIMIZE: If both streams are raw FDs, use crate::utils::splice::SpliceGate
+        // for zero-copy forwarding. This is currently skipped to ensure compatibility
+        // with TLS/H2 layers.
 
         let client_to_remote = async {
             let mut buf = PooledBuffer::get();
@@ -139,10 +144,10 @@ impl ConnectionManager {
     pub async fn handle_connection<T>(
         &self,
         client_stream: T,
-        remote_stream: TcpStream,
+        remote_stream: DualTcpStream,
     ) -> Result<()> 
     where
-        T: AsyncRead + AsyncWrite + Unpin + Send + 'static
+        T: AsyncRead + AsyncWrite + Unpin + 'static
     {
         // 增加活跃连接计数
         self.active_connections
@@ -151,7 +156,7 @@ impl ConnectionManager {
         let active_connections = self.active_connections.clone();
 
         // 在新任务中处理连接
-        tokio::spawn(async move {
+        crate::utils::task::spawn(async move {
             let connection = ProxyConnection::new(client_stream, remote_stream);
             
             if let Err(e) = connection.relay().await {

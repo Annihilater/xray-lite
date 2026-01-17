@@ -44,3 +44,7 @@ gh
 # Compiled Binaries
 vless-server-linux-*
 keygen-linux-*
+
+# Downloaded binaries
+xray-linux-amd64
+xray-linux-amd64.dgst
