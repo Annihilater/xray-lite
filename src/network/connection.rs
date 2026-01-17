@@ -1,7 +1,7 @@
 use anyhow::Result;
 use crate::utils::net::DualTcpStream;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tracing::{debug, error};
+use tracing::debug;
 
 pub struct ProxyConnection<C, R> {
     client_stream: C,
@@ -14,13 +14,9 @@ where
     R: AsyncRead + AsyncWrite + Unpin + 'static
 {
     pub fn new(client_stream: C, remote_stream: R) -> Self {
-        Self {
-            client_stream,
-            remote_stream,
-        }
+        Self { client_stream, remote_stream }
     }
 
-    /// 双向数据转发 - 恢复经受过考验的 copy_bidirectional 逻辑
     pub async fn relay(mut self) -> Result<()> {
         match tokio::io::copy_bidirectional(&mut self.client_stream, &mut self.remote_stream).await {
             Ok((c_to_r, r_to_c)) => {
@@ -33,6 +29,54 @@ where
             }
         }
     }
+}
+
+/// 原生 monoio 高性能双向转发 - 不使用 compat 层
+pub async fn native_monoio_relay(
+    client: monoio::net::TcpStream,
+    remote: monoio::net::TcpStream,
+) -> Result<()> {
+    use monoio::io::{AsyncReadRent, AsyncWriteRentExt, Splitable};
+    
+    let (mut client_read, mut client_write) = client.into_split();
+    let (mut remote_read, mut remote_write) = remote.into_split();
+    
+    let c_to_r = async {
+        let mut buf = vec![0u8; 128 * 1024];
+        loop {
+            let (res, b) = client_read.read(buf).await;
+            buf = b;
+            match res {
+                Ok(0) => break,
+                Ok(n) => {
+                    let slice = buf[..n].to_vec();
+                    let (res, _) = remote_write.write_all(slice).await;
+                    if res.is_err() { break; }
+                }
+                Err(_) => break,
+            }
+        }
+    };
+    
+    let r_to_c = async {
+        let mut buf = vec![0u8; 128 * 1024];
+        loop {
+            let (res, b) = remote_read.read(buf).await;
+            buf = b;
+            match res {
+                Ok(0) => break,
+                Ok(n) => {
+                    let slice = buf[..n].to_vec();
+                    let (res, _) = client_write.write_all(slice).await;
+                    if res.is_err() { break; }
+                }
+                Err(_) => break,
+            }
+        }
+    };
+    
+    futures::join!(c_to_r, r_to_c);
+    Ok(())
 }
 
 #[derive(Clone)]
