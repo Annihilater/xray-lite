@@ -53,9 +53,10 @@ fn main() -> Result<()> {
         // Local-thread initialization for monoio
         // Local-thread initialization for monoio with timer enabled
         // Local-thread initialization for monoio with timer enabled and core pinning
-        let mut rt = monoio::RuntimeBuilder::<monoio::IoUringDriver>::new()
+        // Use FusionDriver to support fallback and potentially better CPU behavior
+        let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
             .enable_timer() // Important: Enable timer!
-            .with_entries(32768) // Optimized for high concurrency
+            .with_entries(2048) // Optimized for single-core/low-resource VPS
             .build()
             .unwrap();
 
