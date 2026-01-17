@@ -1,0 +1,25 @@
+[package]
+name = "monoio-rustls-reality"
+version = "0.1.0"
+
+authors = ["Undead <undead-undead@github.com>"]
+categories = ["asynchronous", "cryptography", "network-programming"]
+description = "Monoio TLS with Reality protocol support based on rustls-reality"
+edition = "2021"
+license = "MIT/Apache-2.0"
+
+[dependencies]
+monoio = "0.2"
+bytes = "1.5"
+thiserror = "1.0"
+
+monoio-io-wrapper = { version = "0.1.1", path = "../monoio-io-wrapper" }
+# 使用本地补丁版 rustls-reality (0.22.x)
+rustls = { path = "../rustls-reality/rustls", default-features = false }
+rustls-pki-types = "1"
+
+[features]
+default = ["logging", "tls12"]
+logging = ["rustls/logging"]
+tls12 = ["rustls/tls12"]
+unsafe_io = ["monoio-io-wrapper/unsafe_io"]

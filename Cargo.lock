@@ -1088,6 +1088,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "monoio-io-wrapper"
+version = "0.1.1"
+dependencies = [
+ "monoio",
+]
+
+[[package]]
 name = "monoio-macros"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1096,6 +1103,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "monoio-rustls-reality"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "monoio",
+ "monoio-io-wrapper",
+ "rustls",
+ "rustls-pki-types",
+ "thiserror",
 ]
 
 [[package]]
@@ -2404,6 +2423,8 @@ dependencies = [
  "lru",
  "monoio",
  "monoio-compat",
+ "monoio-io-wrapper",
+ "monoio-rustls-reality",
  "nix 0.27.1",
  "once_cell",
  "rand",

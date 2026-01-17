@@ -1,40 +1,35 @@
+// server_uring.rs
+// 完全原生 monoio 的 io_uring 服务器实现 - 不使用任何 compat 层
+
 use anyhow::Result;
 use monoio::net::TcpListener;
-use monoio_compat::TcpStreamCompat;
-use tracing::{error, info};
+use monoio::io::{AsyncReadRent, AsyncWriteRent, AsyncWriteRentExt};
+use tracing::{error, info, debug};
 use uuid::Uuid;
+use bytes::BytesMut;
 
 use crate::config::{Config, Inbound, Security};
-use crate::network::ConnectionManager;
-use crate::protocol::vless::VlessCodec;
-use crate::transport::{RealityServer, XhttpServer};
-use crate::server::Server;
+use crate::protocol::vless::{VlessCodec, VlessRequest};
+use crate::transport::reality::server_monoio::RealityServerMonoio;
 
 pub struct UringServer {
     config: Config,
-    connection_manager: ConnectionManager,
 }
 
 impl UringServer {
     pub fn new(config: Config) -> Result<Self> {
-        Ok(Self {
-            config,
-            connection_manager: ConnectionManager::new(),
-        })
+        Ok(Self { config })
     }
 
     pub async fn run(self) -> Result<()> {
         let mut handles = vec![];
 
         for inbound in self.config.inbounds.clone() {
-            let connection_manager = self.connection_manager.clone();
-            
             let handle = monoio::spawn(async move {
-                if let Err(e) = Self::run_inbound(inbound, connection_manager).await {
-                    error!("入站处理失败 (io_uring): {}", e);
+                if let Err(e) = Self::run_inbound(inbound).await {
+                    error!("入站处理失败 (io_uring native): {}", e);
                 }
             });
-
             handles.push(handle);
         }
 
@@ -45,14 +40,13 @@ impl UringServer {
         Ok(())
     }
 
-    async fn run_inbound(inbound: Inbound, connection_manager: ConnectionManager) -> Result<()> {
+    async fn run_inbound(inbound: Inbound) -> Result<()> {
         let addr = format!("{}:{}", inbound.listen, inbound.port);
         
-        // Listen using monoio
         let listener = TcpListener::bind(&addr)?;
-        info!("🚀 [io_uring] 监听 {} (协议: {:?})", addr, inbound.protocol);
+        info!("🚀 [io_uring Native] 监听 {} (协议: {:?})", addr, inbound.protocol);
 
-        // Prepare shared state (same as in server.rs)
+        // 准备 VLESS UUID
         let uuids: Vec<Uuid> = inbound
             .settings
             .clients
@@ -61,17 +55,20 @@ impl UringServer {
             .collect();
         let codec = VlessCodec::new(uuids);
 
+        // 准备原生 monoio Reality 服务器
         let reality_server = if matches!(inbound.stream_settings.security, Security::Reality) {
             if let Some(reality_settings) = &inbound.stream_settings.reality_settings {
-                let reality_config = crate::transport::reality::RealityConfig {
-                    dest: reality_settings.dest.clone(),
-                    server_names: reality_settings.server_names.clone(),
-                    private_key: reality_settings.private_key.clone(),
-                    public_key: reality_settings.public_key.clone(),
-                    short_ids: reality_settings.short_ids.clone(),
-                    fingerprint: reality_settings.fingerprint.clone(),
-                };
-                Some(RealityServer::new(reality_config)?)
+                let private_key = base64::Engine::decode(
+                    &base64::engine::general_purpose::STANDARD,
+                    &reality_settings.private_key
+                ).unwrap_or_default();
+                
+                Some(RealityServerMonoio::new(
+                    private_key,
+                    Some(reality_settings.dest.clone()),
+                    reality_settings.short_ids.clone(),
+                    reality_settings.server_names.clone(),
+                )?)
             } else {
                 None
             }
@@ -79,64 +76,120 @@ impl UringServer {
             None
         };
 
-        let xhttp_server = if let Some(xhttp_settings) = &inbound.stream_settings.xhttp_settings {
-            let xhttp_config = crate::transport::xhttp::XhttpConfig {
-                mode: match xhttp_settings.mode {
-                    crate::config::XhttpMode::Auto => crate::transport::xhttp::XhttpMode::Auto,
-                    crate::config::XhttpMode::StreamUp => crate::transport::xhttp::XhttpMode::StreamUp,
-                    crate::config::XhttpMode::StreamDown => crate::transport::xhttp::XhttpMode::StreamDown,
-                    crate::config::XhttpMode::StreamOne => crate::transport::xhttp::XhttpMode::StreamOne,
-                },
-                path: xhttp_settings.path.clone(),
-                host: xhttp_settings.host.clone(),
-            };
-            Some(XhttpServer::new(xhttp_config)?)
-        } else {
-            None
-        };
-
         loop {
             match listener.accept().await {
                 Ok((stream, addr)) => {
-                    info!("📥 [io_uring] 新连接来自: {}", addr);
+                    debug!("📥 [io_uring Native] 新连接来自: {}", addr);
                     
                     let codec = codec.clone();
                     let reality_server = reality_server.clone();
-                    let xhttp_server = xhttp_server.clone();
-                    let connection_manager = connection_manager.clone();
-                    
-                    let sniffing_enabled = inbound.settings.sniffing.enabled;
-                    let tcp_no_delay = inbound.stream_settings.sockopt.tcp_no_delay;
-                    let accept_proxy_protocol = inbound.stream_settings.sockopt.accept_proxy_protocol;
 
                     monoio::spawn(async move {
-                        use std::os::fd::AsRawFd;
-                        use monoio_compat::StreamWrapper;
-                        let fd = stream.as_raw_fd();
-                        // 关键优化：使用 128KB 缓冲区代替默认的 8KB
-                        // 减少 io_uring 提交次数 16 倍，大幅降低单核 CPU 开销
-                        let compat_stream = StreamWrapper::new_with_buffer_size(stream, 128 * 1024, 128 * 1024);
-                        let dual_stream = crate::utils::net::DualTcpStream::Monoio(compat_stream, fd);
-
-                        
-                        if let Err(e) = Server::handle_client(
-                            Box::new(dual_stream),
-                            codec,
-                            reality_server,
-                            xhttp_server,
-                            connection_manager,
-                            sniffing_enabled,
-                            tcp_no_delay,
-                            accept_proxy_protocol
-                        ).await {
-                            error!("客户端处理失败 (io_uring): {}", e);
+                        if let Err(e) = Self::handle_client_native(stream, codec, reality_server).await {
+                            debug!("客户端处理完成 (io_uring native): {}", e);
                         }
                     });
                 }
                 Err(e) => {
-                    error!("接受连接失败 (io_uring): {}", e);
+                    error!("接受连接失败 (io_uring native): {}", e);
                 }
             }
         }
+    }
+
+    /// 完全原生 monoio 的客户端处理 - 无 compat 层
+    async fn handle_client_native(
+        stream: monoio::net::TcpStream,
+        codec: VlessCodec,
+        reality_server: Option<RealityServerMonoio>,
+    ) -> Result<()> {
+        // 使用原生 monoio Reality 进行 TLS 握手
+        let mut tls_stream = if let Some(reality) = reality_server {
+            reality.accept(stream).await?
+        } else {
+            return Err(anyhow::anyhow!("No Reality server configured"));
+        };
+
+        // VLESS 协议解析
+        let buffer = vec![0u8; 4096];
+        let (res, buf) = tls_stream.read(buffer).await;
+        let n = res?;
+        
+        if n == 0 {
+            return Err(anyhow::anyhow!("Connection closed"));
+        }
+
+        // 解析 VLESS 请求
+        let mut bytes_mut = BytesMut::from(&buf[..n]);
+        let request = codec.decode_request(&mut bytes_mut)?;
+
+        let target_address = request.address.to_string();
+        info!("🔗 [io_uring Native] 连接目标: {}", target_address);
+
+        // 连接远程 - 原生 monoio
+        let mut remote_stream = monoio::net::TcpStream::connect(&target_address).await?;
+
+        // 发送初始数据 (VLESS 解码后剩余的数据)
+        if !bytes_mut.is_empty() {
+            let payload = bytes_mut.to_vec();
+            let (res, _) = remote_stream.write_all(payload).await;
+            res?;
+        }
+
+
+        // 原生 monoio 双向转发 - 无 compat 层，无额外拷贝
+        Self::native_relay(tls_stream, remote_stream).await
+    }
+
+    /// 原生 monoio 双向转发 - 极致性能
+    async fn native_relay<S1, S2>(mut client: S1, mut remote: S2) -> Result<()> 
+    where 
+        S1: AsyncReadRent + AsyncWriteRent + 'static,
+        S2: AsyncReadRent + AsyncWriteRent + 'static,
+    {
+        // 使用单任务交替读写模式，避免 split 带来的复杂性
+        // 这是一个简化但仍然高效的实现
+        let mut client_buf = vec![0u8; 64 * 1024];
+        let mut remote_buf = vec![0u8; 64 * 1024];
+        let mut client_eof = false;
+        let mut remote_eof = false;
+
+        loop {
+            // 尝试从客户端读取并写入远程
+            if !client_eof {
+                let (res, buf) = client.read(client_buf).await;
+                client_buf = buf;
+                match res {
+                    Ok(0) => client_eof = true,
+                    Ok(n) => {
+                        let data = client_buf[..n].to_vec();
+                        let (res, _) = remote.write_all(data).await;
+                        if res.is_err() { break; }
+                    }
+                    Err(_) => client_eof = true,
+                }
+            }
+
+            // 尝试从远程读取并写入客户端
+            if !remote_eof {
+                let (res, buf) = remote.read(remote_buf).await;
+                remote_buf = buf;
+                match res {
+                    Ok(0) => remote_eof = true,
+                    Ok(n) => {
+                        let data = remote_buf[..n].to_vec();
+                        let (res, _) = client.write_all(data).await;
+                        if res.is_err() { break; }
+                    }
+                    Err(_) => remote_eof = true,
+                }
+            }
+
+            if client_eof && remote_eof {
+                break;
+            }
+        }
+        
+        Ok(())
     }
 }

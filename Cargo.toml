@@ -17,6 +17,8 @@ tokio = { version = "1.35", features = ["full"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 monoio = { version = "0.2", features = ["iouring"] }
 monoio-compat = "0.2"
+monoio-rustls-reality = { path = "./monoio-rustls-reality" }
+monoio-io-wrapper = { path = "./monoio-io-wrapper" }
 nix = { version = "0.27", features = ["fs", "ioctl", "process", "signal", "time", "event", "mman"] }
 
 
