@@ -24,11 +24,12 @@ A lightweight, high-performance VLESS + Reality proxy server implemented in pure
 | **VLESS UDP** | ✅ Stable | UDP over TCP support / UDP over TCP 支持 |
 | **Reality** | ✅ Stable | TLS 1.3 with dynamic certificate / TLS 1.3 动态证书 |
 | **SNI Sniffing** | ✅ Stable | Auto-detect target domain / 自动嗅探目标域名 |
+| **io_uring** | ✅ Beta | Ultra-high performance async I/O (Linux 5.10+) / 超高性能异步 I/O |
 | **XHTTP (NEW)** | ✅ Universal | Integrates: **<span style="color:red">H2 Ping-Pong</span>**, **<span style="color:red">Traffic Shaping</span>**, **<span style="color:red">Chameleon Headers</span>** |
 
 ### Why Xray-Lite? / 为什么选择 Xray-Lite？
 
-- 🚀 **High Performance / 高性能**: Built on Tokio async runtime / 基于 Tokio 异步运行时
+- 🚀 **High Performance / 高性能**: Built on Tokio/Monoio async runtime / 基于 Tokio/Monoio 异步运行时
 - 🪶 **Lightweight / 轻量级**: ~1.5MB binary, ~10MB RAM / 约 1.5MB 二进制文件，约 10MB 内存
 - 🛡️ **Intelligent Adaptive / 智能自适应**: Auto-pairing XHTTP Split-Streams for mobile clients / 自动焊接移动端分离流
 - 🔒 **Secure / 安全**: Reality protocol resists active probing / Reality 协议抵抗主动探测
@@ -42,8 +43,8 @@ A lightweight, high-performance VLESS + Reality proxy server implemented in pure
 ### One-Click Installation (Recommended) / 一键安装（推荐）
 
 ```bash
-# Beta Version (Static Build + XDP Support) / 测试版 (静态编译 + XDP 支持)
-bash <(curl -fsSL https://raw.githubusercontent.com/undead-undead/xray-lite/feature/dynamic-xdp/install.sh)
+# Beta Version (io_uring Support) / 测试版 (支持 io_uring)
+bash <(curl -fsSL https://raw.githubusercontent.com/undead-undead/xray-lite/feature/uring-io-optimized/install.sh)
 ```
 
 > **Note**: This is a **static compilation version** that works perfectly on **any Linux system** (Debian, Ubuntu, CentOS, Alpine, etc.) without dependency issues.
