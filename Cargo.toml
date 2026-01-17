@@ -75,6 +75,7 @@ dashmap = "5.5"
 aya = { version = "0.13", features = ["async_tokio"], optional = true }
 aya-log = { version = "0.2", optional = true }
 env_logger = { version = "0.10", optional = true }
+core_affinity = "0.8.3"
 
 [dev-dependencies]
 criterion = "0.5"

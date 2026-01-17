@@ -52,11 +52,19 @@ fn main() -> Result<()> {
         use crate::utils::task::{set_runtime_mode, RuntimeMode};
         // Local-thread initialization for monoio
         // Local-thread initialization for monoio with timer enabled
+        // Local-thread initialization for monoio with timer enabled and core pinning
         let mut rt = monoio::RuntimeBuilder::<monoio::IoUringDriver>::new()
             .enable_timer() // Important: Enable timer!
             .with_entries(32768) // Optimized for high concurrency
             .build()
             .unwrap();
+
+        // Pin thread to the first available core to avoid ring buffer contention and context switching
+        // This solves "abnormal CPU usage" caused by kernel thread migration with io_uring
+        let core_ids = core_affinity::get_core_ids().unwrap();
+        let core_id = core_ids[0];
+        core_affinity::set_for_current(core_id);
+        info!("📌 Pinning io_uring thread to CPU core: {:?}", core_id);
 
         rt.block_on(async move {
             set_runtime_mode(RuntimeMode::Monoio);
