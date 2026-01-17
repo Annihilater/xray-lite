@@ -32,7 +32,7 @@ A lightweight, high-performance VLESS + Reality proxy server implemented in pure
 - 🪶 **Lightweight / 轻量级**: ~1.5MB binary, ~10MB RAM / 约 1.5MB 二进制文件，约 10MB 内存
 - 🛡️ **Intelligent Adaptive / 智能自适应**: Auto-pairing XHTTP Split-Streams for mobile clients / 自动焊接移动端分离流
 - 🔒 **Secure / 安全**: Reality protocol resists active probing / Reality 协议抵抗主动探测
-- 🔥 **XDP Firewall**: Kernel-level protection against UDP Floods & Probing. / 内核级防御 UDP 洪水和探测。
+- 🔥 **XDP Firewall**: Kernel-level protection against UDP Floods, TCP SYN Floods (Rate Limiting) & Illegal Flags. / 内核级防御 UDP 洪水、TCP SYN 洪水（限流）和非法标志。
 - ✅ **Compatible / 兼容**: Works with v2rayN, Shadowrocket, Xray-core, etc. / 兼容所有主流客户端
 
 ---
