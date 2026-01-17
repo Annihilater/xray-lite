@@ -51,7 +51,14 @@ fn main() -> Result<()> {
         info!("⚡ Using io_uring runtime (monoio)");
         use crate::utils::task::{set_runtime_mode, RuntimeMode};
         // Local-thread initialization for monoio
-        monoio::start::<monoio::IoUringDriver, _>(async move {
+        // Local-thread initialization for monoio with timer enabled
+        let mut rt = monoio::RuntimeBuilder::<monoio::IoUringDriver>::new()
+            .enable_timer() // Important: Enable timer!
+            .with_entries(1024)
+            .build()
+            .unwrap();
+
+        rt.block_on(async move {
             set_runtime_mode(RuntimeMode::Monoio);
             async_main(args).await
         })
