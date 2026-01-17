@@ -40,8 +40,8 @@ impl AsyncSplice {
         S1: AsyncRead + AsyncWrite + MaybeAsRawFd + Unpin,
         S2: AsyncRead + AsyncWrite + MaybeAsRawFd + Unpin,
     {
-        let fd1 = s1.maybe_as_raw_fd().ok_or_else(|| io::Error::new(io::ErrorKind::Other, "S1 no FD"))?;
-        let fd2 = s2.maybe_as_raw_fd().ok_or_else(|| io::Error::new(io::ErrorKind::Other, "S2 no FD"))?;
+        let fd1 = s1.maybe_as_raw_fd().ok_or_else(|| io::Error::new(io::ErrorKind::Other, "S1 not spliceable"))?;
+        let fd2 = s2.maybe_as_raw_fd().ok_or_else(|| io::Error::new(io::ErrorKind::Other, "S2 not spliceable"))?;
 
         let mut s1_to_s2_pipe = 0;
         let mut s2_to_s1_pipe = 0;
@@ -51,7 +51,7 @@ impl AsyncSplice {
         loop {
             let mut made_progress = false;
 
-            // 1. S1 -> S2 (Read to Pipe)
+            // 1. S1 -> S2 (Read into Pipe A)
             if !s1_eof && s1_to_s2_pipe < 128 * 1024 {
                 let n = unsafe { libc::splice(fd1, std::ptr::null_mut(), self.pipe_a_write, std::ptr::null_mut(), 128*1024 - s1_to_s2_pipe, libc::SPLICE_F_MOVE | libc::SPLICE_F_NONBLOCK) };
                 if n > 0 { s1_to_s2_pipe += n as usize; made_progress = true; }
@@ -62,7 +62,7 @@ impl AsyncSplice {
                 }
             }
 
-            // 2. S1 -> S2 (Write from Pipe)
+            // 2. S1 -> S2 (Write from Pipe A)
             if s1_to_s2_pipe > 0 {
                 let n = unsafe { libc::splice(self.pipe_a_read, std::ptr::null_mut(), fd2, std::ptr::null_mut(), s1_to_s2_pipe, libc::SPLICE_F_MOVE | libc::SPLICE_F_NONBLOCK) };
                 if n > 0 { s1_to_s2_pipe -= n as usize; made_progress = true; }
@@ -72,7 +72,7 @@ impl AsyncSplice {
                 }
             }
 
-            // 3. S2 -> S1 (Read to Pipe)
+            // 3. S2 -> S1 (Read into Pipe B)
             if !s2_eof && s2_to_s1_pipe < 128 * 1024 {
                 let n = unsafe { libc::splice(fd2, std::ptr::null_mut(), self.pipe_b_write, std::ptr::null_mut(), 128*1024 - s2_to_s1_pipe, libc::SPLICE_F_MOVE | libc::SPLICE_F_NONBLOCK) };
                 if n > 0 { s2_to_s1_pipe += n as usize; made_progress = true; }
@@ -83,7 +83,7 @@ impl AsyncSplice {
                 }
             }
 
-            // 4. S2 -> S1 (Write from Pipe)
+            // 4. S2 -> S1 (Write from Pipe B)
             if s2_to_s1_pipe > 0 {
                 let n = unsafe { libc::splice(self.pipe_b_read, std::ptr::null_mut(), fd1, std::ptr::null_mut(), s2_to_s1_pipe, libc::SPLICE_F_MOVE | libc::SPLICE_F_NONBLOCK) };
                 if n > 0 { s2_to_s1_pipe -= n as usize; made_progress = true; }
@@ -99,15 +99,12 @@ impl AsyncSplice {
 
             if !made_progress {
                 futures::future::poll_fn(|cx| {
-                    let mut dummy = [0u8; 1];
+                    let mut dummy = [0u8; 0];
                     let mut buf = tokio::io::ReadBuf::new(&mut dummy);
-                    let mut ready = false;
-                    if Pin::new(&mut *s1).poll_read(cx, &mut buf).is_ready() { ready = true; }
-                    if Pin::new(&mut *s2).poll_read(cx, &mut buf).is_ready() { ready = true; }
-                    if Pin::new(&mut *s1).poll_write(cx, &[]).is_ready() { ready = true; }
-                    if Pin::new(&mut *s2).poll_write(cx, &[]).is_ready() { ready = true; }
-                    if ready { Poll::Ready(()) } else { Poll::Pending }
-                }).await;
+                    let _ = Pin::new(&mut *s1).poll_read(cx, &mut buf);
+                    let _ = Pin::new(&mut *s2).poll_read(cx, &mut buf);
+                    Poll::<io::Result<()>>::Pending 
+                }).await.ok();
             }
         }
         Ok(())

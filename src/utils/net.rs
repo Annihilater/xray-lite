@@ -10,17 +10,19 @@ pub trait MaybeAsRawFd {
     fn maybe_as_raw_fd(&self) -> Option<RawFd>;
 }
 
-// 基础类型实现
+// 基础 TCP 实现
 impl MaybeAsRawFd for tokio::net::TcpStream {
     fn maybe_as_raw_fd(&self) -> Option<RawFd> { Some(self.as_raw_fd()) }
 }
 
+// ！！！关键修改：TLS/Reality 包装层严禁直接使用 Splice ！！！
+// 因为 Splice 会绕过解密逻辑，导致数据损坏。
 impl<S: MaybeAsRawFd> MaybeAsRawFd for tokio_rustls::server::TlsStream<S> {
-    fn maybe_as_raw_fd(&self) -> Option<RawFd> { self.get_ref().0.maybe_as_raw_fd() }
+    fn maybe_as_raw_fd(&self) -> Option<RawFd> { None } 
 }
 
 impl<S: MaybeAsRawFd> MaybeAsRawFd for tokio_rustls::client::TlsStream<S> {
-    fn maybe_as_raw_fd(&self) -> Option<RawFd> { self.get_ref().0.maybe_as_raw_fd() }
+    fn maybe_as_raw_fd(&self) -> Option<RawFd> { None }
 }
 
 impl MaybeAsRawFd for tokio::io::DuplexStream {
@@ -59,10 +61,7 @@ impl DualTcpStream {
     pub fn set_nodelay(&self, nodelay: bool) -> Result<()> {
         match self {
             Self::Tokio(s, _) => s.set_nodelay(nodelay).map_err(|e| e.into()),
-            Self::Monoio(_, _) => {
-                // Monoio handles nodelay at connection time or via other means
-                Ok(())
-            }
+            Self::Monoio(_, _) => Ok(()), // Monoio defaults or handles differently
         }
     }
 }
@@ -71,14 +70,8 @@ impl MaybeAsRawFd for DualTcpStream {
     fn maybe_as_raw_fd(&self) -> Option<RawFd> { self.raw_fd() }
 }
 
-// 关键：为 Box<dyn AsyncStream> 等包装类型实现递归探测
 impl<T: MaybeAsRawFd + ?Sized> MaybeAsRawFd for Box<T> {
     fn maybe_as_raw_fd(&self) -> Option<RawFd> { (**self).maybe_as_raw_fd() }
-}
-
-// 解决 Split 后的 FD 丢失问题
-impl<S: MaybeAsRawFd> MaybeAsRawFd for tokio::io::ReadHalf<S> {
-    fn maybe_as_raw_fd(&self) -> Option<RawFd> { None }
 }
 
 impl AsyncRead for DualTcpStream {
