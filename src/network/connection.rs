@@ -66,6 +66,15 @@ where
     }
     /// 双向数据转发
     pub async fn relay(mut self) -> Result<()> {
+        use crate::utils::splice::AsyncSplice;
+        
+        if let Ok(splice) = AsyncSplice::new() {
+            if let Ok(_) = splice.relay(&mut self.client_stream, &mut self.remote_stream).await {
+                return Ok(());
+            }
+        }
+
+        // Fallback to standard if splice fails or is not possible
         match tokio::io::copy_bidirectional(&mut self.client_stream, &mut self.remote_stream).await {
             Ok((c_to_r, r_to_c)) => {
                 debug!("连接正常关闭: C->R {} bytes, R->C {} bytes", c_to_r, r_to_c);

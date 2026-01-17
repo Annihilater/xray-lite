@@ -53,12 +53,12 @@ fn main() -> Result<()> {
         // Local-thread initialization for monoio
         // Local-thread initialization for monoio with timer enabled
         // Local-thread initialization for monoio with timer enabled and core pinning
-        // Use FusionDriver to support fallback and potentially better CPU behavior
-        let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
-            .enable_timer() // Important: Enable timer!
-            .with_entries(2048) // Optimized for single-core/low-resource VPS
+        // Single-threaded io_uring runtime optimized for single-core KVM
+        let mut rt = monoio::RuntimeBuilder::<monoio::IoUringDriver>::new()
+            .enable_timer()
+            .with_entries(512) // Lower depth for 1 vCPU to reduce context switch storms
             .build()
-            .unwrap();
+            .expect("Failed to build monoio runtime");
 
         // Pin thread to the first available core to avoid ring buffer contention and context switching
         // This solves "abnormal CPU usage" caused by kernel thread migration with io_uring

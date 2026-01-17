@@ -10,29 +10,21 @@ pub trait MaybeAsRawFd {
     fn maybe_as_raw_fd(&self) -> Option<RawFd>;
 }
 
-// Implement for standard types
+// 基础类型实现
 impl MaybeAsRawFd for tokio::net::TcpStream {
-    fn maybe_as_raw_fd(&self) -> Option<RawFd> {
-        Some(self.as_raw_fd())
-    }
+    fn maybe_as_raw_fd(&self) -> Option<RawFd> { Some(self.as_raw_fd()) }
 }
 
 impl<S: MaybeAsRawFd> MaybeAsRawFd for tokio_rustls::server::TlsStream<S> {
-    fn maybe_as_raw_fd(&self) -> Option<RawFd> {
-        self.get_ref().0.maybe_as_raw_fd()
-    }
+    fn maybe_as_raw_fd(&self) -> Option<RawFd> { self.get_ref().0.maybe_as_raw_fd() }
 }
 
 impl<S: MaybeAsRawFd> MaybeAsRawFd for tokio_rustls::client::TlsStream<S> {
-    fn maybe_as_raw_fd(&self) -> Option<RawFd> {
-        self.get_ref().0.maybe_as_raw_fd()
-    }
+    fn maybe_as_raw_fd(&self) -> Option<RawFd> { self.get_ref().0.maybe_as_raw_fd() }
 }
 
 impl MaybeAsRawFd for tokio::io::DuplexStream {
-    fn maybe_as_raw_fd(&self) -> Option<RawFd> {
-        None
-    }
+    fn maybe_as_raw_fd(&self) -> Option<RawFd> { None }
 }
 
 pub enum DualTcpStream {
@@ -63,40 +55,34 @@ impl DualTcpStream {
             Self::Monoio(_, fd) => Some(*fd),
         }
     }
-}
 
-impl MaybeAsRawFd for DualTcpStream {
-    fn maybe_as_raw_fd(&self) -> Option<RawFd> {
-        self.raw_fd()
-    }
-}
-
-impl AsRawFd for DualTcpStream {
-    fn as_raw_fd(&self) -> RawFd {
-        match self {
-            Self::Tokio(_, fd) => *fd,
-            Self::Monoio(_, fd) => *fd,
-        }
-    }
-}
-
-impl DualTcpStream {
     pub fn set_nodelay(&self, nodelay: bool) -> Result<()> {
         match self {
             Self::Tokio(s, _) => s.set_nodelay(nodelay).map_err(|e| e.into()),
             Self::Monoio(_, _) => {
+                // Monoio handles nodelay at connection time or via other means
                 Ok(())
             }
         }
     }
 }
 
+impl MaybeAsRawFd for DualTcpStream {
+    fn maybe_as_raw_fd(&self) -> Option<RawFd> { self.raw_fd() }
+}
+
+// 关键：为 Box<dyn AsyncStream> 等包装类型实现递归探测
+impl<T: MaybeAsRawFd + ?Sized> MaybeAsRawFd for Box<T> {
+    fn maybe_as_raw_fd(&self) -> Option<RawFd> { (**self).maybe_as_raw_fd() }
+}
+
+// 解决 Split 后的 FD 丢失问题
+impl<S: MaybeAsRawFd> MaybeAsRawFd for tokio::io::ReadHalf<S> {
+    fn maybe_as_raw_fd(&self) -> Option<RawFd> { None }
+}
+
 impl AsyncRead for DualTcpStream {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
+    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
         match self.get_mut() {
             Self::Tokio(s, _) => Pin::new(s).poll_read(cx, buf),
             Self::Monoio(s, _) => Pin::new(s).poll_read(cx, buf),
@@ -105,42 +91,22 @@ impl AsyncRead for DualTcpStream {
 }
 
 impl AsyncWrite for DualTcpStream {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<io::Result<usize>> {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
         match self.get_mut() {
             Self::Tokio(s, _) => Pin::new(s).poll_write(cx, buf),
             Self::Monoio(s, _) => Pin::new(s).poll_write(cx, buf),
         }
     }
-
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match self.get_mut() {
             Self::Tokio(s, _) => Pin::new(s).poll_flush(cx),
             Self::Monoio(s, _) => Pin::new(s).poll_flush(cx),
         }
     }
-
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match self.get_mut() {
             Self::Tokio(s, _) => Pin::new(s).poll_shutdown(cx),
             Self::Monoio(s, _) => Pin::new(s).poll_shutdown(cx),
         }
     }
-}
-
-impl<T: MaybeAsRawFd + ?Sized> MaybeAsRawFd for Box<T> {
-    fn maybe_as_raw_fd(&self) -> Option<RawFd> {
-        (**self).maybe_as_raw_fd()
-    }
-}
-
-impl<S> MaybeAsRawFd for tokio::io::ReadHalf<S> {
-    fn maybe_as_raw_fd(&self) -> Option<RawFd> { None }
-}
-
-impl<S> MaybeAsRawFd for tokio::io::WriteHalf<S> {
-    fn maybe_as_raw_fd(&self) -> Option<RawFd> { None }
 }
