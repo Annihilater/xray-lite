@@ -1,9 +1,7 @@
 use anyhow::Result;
 use crate::utils::net::DualTcpStream;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::{debug, error};
-
-const RELAY_BUFFER_SIZE: usize = 128 * 1024; // 128KB 巨型缓冲区，专为单核高吞吐设计
 
 pub struct ProxyConnection<C, R> {
     client_stream: C,
@@ -22,42 +20,15 @@ where
         }
     }
 
-    /// 双向数据转发 - 深度优化版本 (1 vCPU 特化版)
-    pub async fn relay(self) -> Result<()> {
-        let (mut c_read, mut c_write) = tokio::io::split(self.client_stream);
-        let (mut r_read, mut r_write) = tokio::io::split(self.remote_stream);
-
-        // 使用大型缓冲区和并行任务
-        let client_to_remote = async move {
-            let mut buf = vec![0u8; RELAY_BUFFER_SIZE];
-            loop {
-                let n = c_read.read(&mut buf).await?;
-                if n == 0 { break; }
-                r_write.write_all(&buf[..n]).await?;
-            }
-            r_write.shutdown().await?;
-            Ok::<u64, std::io::Error>(0)
-        };
-
-        let remote_to_client = async move {
-            let mut buf = vec![0u8; RELAY_BUFFER_SIZE];
-            loop {
-                let n = r_read.read(&mut buf).await?;
-                if n == 0 { break; }
-                c_write.write_all(&buf[..n]).await?;
-            }
-            c_write.shutdown().await?;
-            Ok::<u64, std::io::Error>(0)
-        };
-
-        // 并行处理两个方向
-        match tokio::try_join!(client_to_remote, remote_to_client) {
-            Ok(_) => {
-                debug!("连接已平滑关闭");
+    /// 双向数据转发 - 恢复经受过考验的 copy_bidirectional 逻辑
+    pub async fn relay(mut self) -> Result<()> {
+        match tokio::io::copy_bidirectional(&mut self.client_stream, &mut self.remote_stream).await {
+            Ok((c_to_r, r_to_c)) => {
+                debug!("连接关闭: C->R {} B, R->C {} B", c_to_r, r_to_c);
                 Ok(())
             }
             Err(e) => {
-                debug!("连接异常中断: {}", e);
+                debug!("连接中断: {}", e);
                 Ok(())
             }
         }

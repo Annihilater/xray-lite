@@ -10,22 +10,31 @@ pub trait MaybeAsRawFd {
     fn maybe_as_raw_fd(&self) -> Option<RawFd>;
 }
 
-// 基础 TCP 实现
+impl<T: MaybeAsRawFd + ?Sized> MaybeAsRawFd for Box<T> {
+    fn maybe_as_raw_fd(&self) -> Option<RawFd> { (**self).maybe_as_raw_fd() }
+}
+
+impl MaybeAsRawFd for tokio::io::DuplexStream {
+    fn maybe_as_raw_fd(&self) -> Option<RawFd> { None }
+}
+
+impl<S: MaybeAsRawFd> MaybeAsRawFd for tokio::io::ReadHalf<S> {
+    fn maybe_as_raw_fd(&self) -> Option<RawFd> { None }
+}
+
+impl<S: MaybeAsRawFd> MaybeAsRawFd for tokio::io::WriteHalf<S> {
+    fn maybe_as_raw_fd(&self) -> Option<RawFd> { None }
+}
+
 impl MaybeAsRawFd for tokio::net::TcpStream {
     fn maybe_as_raw_fd(&self) -> Option<RawFd> { Some(self.as_raw_fd()) }
 }
 
-// ！！！关键修改：TLS/Reality 包装层严禁直接使用 Splice ！！！
-// 因为 Splice 会绕过解密逻辑，导致数据损坏。
 impl<S: MaybeAsRawFd> MaybeAsRawFd for tokio_rustls::server::TlsStream<S> {
-    fn maybe_as_raw_fd(&self) -> Option<RawFd> { None } 
-}
-
-impl<S: MaybeAsRawFd> MaybeAsRawFd for tokio_rustls::client::TlsStream<S> {
     fn maybe_as_raw_fd(&self) -> Option<RawFd> { None }
 }
 
-impl MaybeAsRawFd for tokio::io::DuplexStream {
+impl<S: MaybeAsRawFd> MaybeAsRawFd for tokio_rustls::client::TlsStream<S> {
     fn maybe_as_raw_fd(&self) -> Option<RawFd> { None }
 }
 
@@ -50,28 +59,25 @@ impl DualTcpStream {
             }
         }
     }
+}
 
-    pub fn raw_fd(&self) -> Option<RawFd> {
+impl MaybeAsRawFd for DualTcpStream {
+    fn maybe_as_raw_fd(&self) -> Option<RawFd> {
         match self {
             Self::Tokio(_, fd) => Some(*fd),
             Self::Monoio(_, fd) => Some(*fd),
         }
     }
+}
 
+impl DualTcpStream {
     pub fn set_nodelay(&self, nodelay: bool) -> Result<()> {
-        match self {
-            Self::Tokio(s, _) => s.set_nodelay(nodelay).map_err(|e| e.into()),
-            Self::Monoio(_, _) => Ok(()), // Monoio defaults or handles differently
+        if let Self::Tokio(s, _) = self {
+            s.set_nodelay(nodelay).map_err(|e| e.into())
+        } else {
+            Ok(())
         }
     }
-}
-
-impl MaybeAsRawFd for DualTcpStream {
-    fn maybe_as_raw_fd(&self) -> Option<RawFd> { self.raw_fd() }
-}
-
-impl<T: MaybeAsRawFd + ?Sized> MaybeAsRawFd for Box<T> {
-    fn maybe_as_raw_fd(&self) -> Option<RawFd> { (**self).maybe_as_raw_fd() }
 }
 
 impl AsyncRead for DualTcpStream {
