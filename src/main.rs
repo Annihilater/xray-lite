@@ -77,7 +77,8 @@ fn main() -> Result<()> {
         let rt = tokio::runtime::Runtime::new()?;
         rt.block_on(async move {
             set_runtime_mode(RuntimeMode::Tokio);
-            async_main(args).await
+            let local = tokio::task::LocalSet::new();
+            local.run_until(async_main(args)).await
         })
     }
 }
