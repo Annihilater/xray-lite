@@ -14,8 +14,8 @@ use crate::transport::{RealityServer, XhttpServer};
 use crate::handler::serve_vless;
 
 /// 定义通用的 AsyncStream trait 以支持 TCP 和 TLS 流
-pub trait AsyncStream: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + 'static {}
-impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + 'static> AsyncStream for T {}
+pub trait AsyncStream: tokio::io::AsyncRead + tokio::io::AsyncWrite + crate::utils::net::MaybeAsRawFd + Unpin + 'static {}
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + crate::utils::net::MaybeAsRawFd + Unpin + 'static> AsyncStream for T {}
 
 /// 代理服务器
 pub struct Server {
@@ -137,7 +137,7 @@ impl Server {
         tcp_no_delay: bool,
         accept_proxy_protocol: bool,
     ) -> Result<()> 
-    where S: AsyncRead + AsyncWrite + Unpin + 'static
+    where S: AsyncRead + AsyncWrite + Unpin + 'static + crate::utils::net::MaybeAsRawFd
     {
         // 1. Proxy Protocol
         let (stream, _real_addr): (Box<dyn AsyncStream>, _) = if accept_proxy_protocol {
@@ -193,6 +193,12 @@ pub struct PrefixedStream<S> {
 impl<S> PrefixedStream<S> {
     pub fn new(prefix: Vec<u8>, inner: S) -> Self {
         Self { prefix: std::io::Cursor::new(prefix), inner }
+    }
+}
+
+impl<S: crate::utils::net::MaybeAsRawFd> crate::utils::net::MaybeAsRawFd for PrefixedStream<S> {
+    fn maybe_as_raw_fd(&self) -> Option<std::os::fd::RawFd> {
+        self.inner.maybe_as_raw_fd()
     }
 }
 

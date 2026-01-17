@@ -35,7 +35,7 @@ impl XhttpServer {
     /// 处理传入的连接
     pub async fn accept<T, F, Fut>(&self, stream: T, handler: F) -> Result<()>
     where
-        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + 'static,
+        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + crate::utils::net::MaybeAsRawFd + Unpin + 'static,
         F: Fn(Box<dyn crate::server::AsyncStream>) -> Fut + Clone + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<()>> + 'static,
     {

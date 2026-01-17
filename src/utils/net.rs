@@ -6,9 +6,38 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use anyhow::Result;
 use crate::utils::task::{get_runtime_mode, RuntimeMode};
 
+pub trait MaybeAsRawFd {
+    fn maybe_as_raw_fd(&self) -> Option<RawFd>;
+}
+
+// Implement for standard types
+impl MaybeAsRawFd for tokio::net::TcpStream {
+    fn maybe_as_raw_fd(&self) -> Option<RawFd> {
+        Some(self.as_raw_fd())
+    }
+}
+
+impl<S: MaybeAsRawFd> MaybeAsRawFd for tokio_rustls::server::TlsStream<S> {
+    fn maybe_as_raw_fd(&self) -> Option<RawFd> {
+        self.get_ref().0.maybe_as_raw_fd()
+    }
+}
+
+impl<S: MaybeAsRawFd> MaybeAsRawFd for tokio_rustls::client::TlsStream<S> {
+    fn maybe_as_raw_fd(&self) -> Option<RawFd> {
+        self.get_ref().0.maybe_as_raw_fd()
+    }
+}
+
+impl MaybeAsRawFd for tokio::io::DuplexStream {
+    fn maybe_as_raw_fd(&self) -> Option<RawFd> {
+        None
+    }
+}
+
 pub enum DualTcpStream {
-    Tokio(tokio::net::TcpStream),
-    Monoio(monoio_compat::TcpStreamCompat),
+    Tokio(tokio::net::TcpStream, RawFd),
+    Monoio(monoio_compat::TcpStreamCompat, RawFd),
 }
 
 impl DualTcpStream {
@@ -16,35 +45,46 @@ impl DualTcpStream {
         match get_runtime_mode() {
             RuntimeMode::Tokio => {
                  let stream = tokio::net::TcpStream::connect(addr).await?;
-                 Ok(Self::Tokio(stream))
+                 let fd = stream.as_raw_fd();
+                 Ok(Self::Tokio(stream, fd))
             }
             RuntimeMode::Monoio => {
                 let stream = monoio::net::TcpStream::connect(addr).await?;
+                let fd = stream.as_raw_fd();
                 let compat = monoio_compat::TcpStreamCompat::new(stream);
-                Ok(Self::Monoio(compat))
+                Ok(Self::Monoio(compat, fd))
             }
         }
     }
 
     pub fn raw_fd(&self) -> Option<RawFd> {
         match self {
-            Self::Tokio(s) => Some(s.as_raw_fd()),
-            Self::Monoio(_) => None, 
+            Self::Tokio(_, fd) => Some(*fd),
+            Self::Monoio(_, fd) => Some(*fd),
         }
     }
+}
 
+impl MaybeAsRawFd for DualTcpStream {
+    fn maybe_as_raw_fd(&self) -> Option<RawFd> {
+        self.raw_fd()
+    }
+}
+
+impl AsRawFd for DualTcpStream {
+    fn as_raw_fd(&self) -> RawFd {
+        match self {
+            Self::Tokio(_, fd) => *fd,
+            Self::Monoio(_, fd) => *fd,
+        }
+    }
+}
+
+impl DualTcpStream {
     pub fn set_nodelay(&self, nodelay: bool) -> Result<()> {
         match self {
-            Self::Tokio(s) => s.set_nodelay(nodelay).map_err(|e| e.into()),
-            Self::Monoio(s) => {
-                // TcpStreamCompat does not expose set_nodelay directly usually?
-                // But wrapper usually implements AsyncRead/Write.
-                // We might need to unsafe access or assume default.
-                // Monoio streams are usually nodelay by default?
-                // Let's check if we can deref.
-                // If s is TcpStreamCompat, it does not deref.
-                // If we can't set it, we ignore it or warn.
-                // For now, ignore.
+            Self::Tokio(s, _) => s.set_nodelay(nodelay).map_err(|e| e.into()),
+            Self::Monoio(_, _) => {
                 Ok(())
             }
         }
@@ -58,8 +98,8 @@ impl AsyncRead for DualTcpStream {
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         match self.get_mut() {
-            Self::Tokio(s) => Pin::new(s).poll_read(cx, buf),
-            Self::Monoio(s) => Pin::new(s).poll_read(cx, buf),
+            Self::Tokio(s, _) => Pin::new(s).poll_read(cx, buf),
+            Self::Monoio(s, _) => Pin::new(s).poll_read(cx, buf),
         }
     }
 }
@@ -71,22 +111,28 @@ impl AsyncWrite for DualTcpStream {
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
         match self.get_mut() {
-            Self::Tokio(s) => Pin::new(s).poll_write(cx, buf),
-            Self::Monoio(s) => Pin::new(s).poll_write(cx, buf),
+            Self::Tokio(s, _) => Pin::new(s).poll_write(cx, buf),
+            Self::Monoio(s, _) => Pin::new(s).poll_write(cx, buf),
         }
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match self.get_mut() {
-            Self::Tokio(s) => Pin::new(s).poll_flush(cx),
-            Self::Monoio(s) => Pin::new(s).poll_flush(cx),
+            Self::Tokio(s, _) => Pin::new(s).poll_flush(cx),
+            Self::Monoio(s, _) => Pin::new(s).poll_flush(cx),
         }
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match self.get_mut() {
-            Self::Tokio(s) => Pin::new(s).poll_shutdown(cx),
-            Self::Monoio(s) => Pin::new(s).poll_shutdown(cx),
+            Self::Tokio(s, _) => Pin::new(s).poll_shutdown(cx),
+            Self::Monoio(s, _) => Pin::new(s).poll_shutdown(cx),
         }
+    }
+}
+
+impl<T: MaybeAsRawFd + ?Sized> MaybeAsRawFd for Box<T> {
+    fn maybe_as_raw_fd(&self) -> Option<RawFd> {
+        (**self).maybe_as_raw_fd()
     }
 }

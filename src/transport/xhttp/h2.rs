@@ -66,7 +66,7 @@ impl H2Handler {
 
     pub async fn handle<T, F, Fut>(&self, stream: T, handler: F) -> Result<()>
     where
-        T: AsyncRead + AsyncWrite + Unpin + 'static,
+        T: AsyncRead + AsyncWrite + crate::utils::net::MaybeAsRawFd + Unpin + 'static,
         F: Fn(Box<dyn crate::server::AsyncStream>) -> Fut + Clone + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<()>> + 'static,
     {

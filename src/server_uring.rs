@@ -110,11 +110,13 @@ impl UringServer {
                     let accept_proxy_protocol = inbound.stream_settings.sockopt.accept_proxy_protocol;
 
                     monoio::spawn(async move {
-                        // Bridge monoio TcpStream to tokio AsyncRead/Write using monoio-compat
+                        use std::os::fd::AsRawFd;
+                        let fd = stream.as_raw_fd();
                         let compat_stream = TcpStreamCompat::new(stream);
+                        let dual_stream = crate::utils::net::DualTcpStream::Monoio(compat_stream, fd);
                         
                         if let Err(e) = Server::handle_client(
-                            Box::new(compat_stream),
+                            Box::new(dual_stream),
                             codec,
                             reality_server,
                             xhttp_server,

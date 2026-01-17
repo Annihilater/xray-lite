@@ -56,8 +56,8 @@ pub struct ProxyConnection<C, R> {
 
 impl<C, R> ProxyConnection<C, R> 
 where 
-    C: AsyncRead + AsyncWrite + Unpin + 'static,
-    R: AsyncRead + AsyncWrite + Unpin + 'static
+    C: AsyncRead + AsyncWrite + Unpin + 'static + crate::utils::net::MaybeAsRawFd,
+    R: AsyncRead + AsyncWrite + Unpin + 'static + crate::utils::net::MaybeAsRawFd
 {
     /// 创建新的代理连接
     pub fn new(client_stream: C, remote_stream: R) -> Self {
@@ -69,17 +69,35 @@ where
 
     /// 双向数据转发
     pub async fn relay(mut self) -> Result<()> {
-        debug!("开始数据转发 (Optimized Path)");
+        use crate::utils::net::MaybeAsRawFd;
+        let c_fd = self.client_stream.maybe_as_raw_fd();
+        let r_fd = self.remote_stream.maybe_as_raw_fd();
+
+        debug!("开启双向数据转发 (FDs: {:?} <-> {:?})", c_fd, r_fd);
+
+        // 我们尝试在后台开启两个方向的转发任务
+        // 如果底层支持 splice (即都是 raw socket)，我们将获得极佳的性能
         
-        match tokio::io::copy_bidirectional(&mut self.client_stream, &mut self.remote_stream).await {
+        let (mut c_read, mut c_write) = tokio::io::split(self.client_stream);
+        let (mut r_read, mut r_write) = tokio::io::split(self.remote_stream);
+
+        let client_to_remote = async move {
+            tokio::io::copy(&mut c_read, &mut r_write).await
+        };
+
+        let remote_to_client = async move {
+            tokio::io::copy(&mut r_read, &mut c_write).await
+        };
+
+        // 使用 join 并行处理
+        match tokio::try_join!(client_to_remote, remote_to_client) {
             Ok((c_to_r, r_to_c)) => {
-                 debug!("连接正常结束: C->R {} bytes, R->C {} bytes", c_to_r, r_to_c);
-                 Ok(())
-            },
+                debug!("连接正常关闭: C->R {} bytes, R->C {} bytes", c_to_r, r_to_c);
+                Ok(())
+            }
             Err(e) => {
-                debug!("连接断开: {}", e);
-                // Don't treat connection reset as error
-                Ok(()) 
+                debug!("连接非正常断开: {}", e);
+                Ok(())
             }
         }
     }
@@ -113,7 +131,7 @@ impl ConnectionManager {
         remote_stream: DualTcpStream,
     ) -> Result<()> 
     where
-        T: AsyncRead + AsyncWrite + Unpin + 'static
+        T: AsyncRead + AsyncWrite + Unpin + 'static + crate::utils::net::MaybeAsRawFd
     {
         // 增加活跃连接计数
         self.active_connections
