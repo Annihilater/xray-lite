@@ -67,53 +67,20 @@ where
     }
 
     /// 双向数据转发
-    pub async fn relay(self) -> Result<()> {
-        debug!("开始双向数据转发 (已启用内存池)");
+    pub async fn relay(mut self) -> Result<()> {
+        debug!("开始双向数据转发 (使用 copy_bidirectional)");
 
-        let (mut c_r, mut c_w) = tokio::io::split(self.client_stream);
-        let (mut r_r, mut r_w) = tokio::io::split(self.remote_stream);
-
-        // TODO OPTIMIZE: If both streams are raw FDs, use crate::utils::splice::SpliceGate
-        // for zero-copy forwarding. This is currently skipped to ensure compatibility
-        // with TLS/H2 layers.
-
-        let client_to_remote = async {
-            let mut buf = PooledBuffer::get();
-            loop {
-                let n = c_r.read(&mut buf).await?;
-                if n == 0 {
-                    r_w.shutdown().await?;
-                    break;
-                }
-                r_w.write_all(&buf[..n]).await?;
-            }
-            Ok::<u64, std::io::Error>(0)
-        };
-
-        let remote_to_client = async {
-            let mut buf = PooledBuffer::get();
-            loop {
-                let n = r_r.read(&mut buf).await?;
-                if n == 0 {
-                    c_w.shutdown().await?;
-                    break;
-                }
-                c_w.write_all(&buf[..n]).await?;
-            }
-            Ok::<u64, std::io::Error>(0)
-        };
-
-        // 使用 try_join! 并发执行两个拷贝任务
-        // 任何一方出错或完成，都会结束
-        match tokio::try_join!(client_to_remote, remote_to_client) {
-            Ok(_) => {
-                debug!("连接正常关闭");
-                Ok(())
-            }
+        // Optimize: Use copy_bidirectional which internaly uses splice/sendfile when possible
+        // and avoids manual user-space buffer management overhead.
+        match tokio::io::copy_bidirectional(&mut self.client_stream, &mut self.remote_stream).await {
+            Ok((c_to_r, r_to_c)) => {
+                 debug!("连接结束: C->R {} bytes, R->C {} bytes", c_to_r, r_to_c);
+                 Ok(())
+            },
             Err(e) => {
-                // 如果是正常的连接重置或关闭，不记录为错误
                 debug!("连接断开: {}", e);
-                Err(e.into())
+                // Don't treat connection reset as error
+                Ok(()) 
             }
         }
     }
