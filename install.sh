@@ -69,12 +69,21 @@ elif [ "$KERNEL_MAJOR" -eq 5 ] && [ "$KERNEL_MINOR" -ge 4 ]; then
     SUPPORT_XDP=true
 fi
 
+# Check for io_uring support (Kernel >= 5.10)
+SUPPORT_URING=false
+if [ "$KERNEL_MAJOR" -gt 5 ]; then
+    SUPPORT_URING=true
+elif [ "$KERNEL_MAJOR" -eq 5 ] && [ "$KERNEL_MINOR" -ge 10 ]; then
+    SUPPORT_URING=true
+fi
+
 # Limit XDP to x86_64 for now
 if [ "$BINARY_ARCH" != "x86_64" ]; then
     SUPPORT_XDP=false
 fi
 
 XDP_ARGS=""
+URING_ARGS=""
 
 if [ "$SUPPORT_XDP" = true ]; then
     echo -e "${GREEN}High-performance Kernel Detected / 检测到高性能内核: ${KERNEL_VERSION}${NC}"
@@ -234,6 +243,21 @@ if [ -t 0 ]; then
     else
         echo -e "${GREEN}✓ Using TCP (default) / 使用 TCP (默认)${NC}"
     fi
+
+    # io_uring configuration
+    ENABLE_URING="n"
+    if [ "$SUPPORT_URING" = true ]; then
+        echo ""
+        echo -e "${YELLOW}Kernel 5.10+ detected, io_uring optimization available (High Performance)${NC}"
+        echo -e "${YELLOW}检测到内核 5.10+，可用 io_uring 性能优化 (高性能)${NC}"
+        read -p "Enable io_uring? / 启用 io_uring? (y/N): " URING_INPUT
+        ENABLE_URING=$(echo "${URING_INPUT:-n}" | tr '[:upper:]' '[:lower:]')
+        
+        if [ "$ENABLE_URING" = "y" ]; then
+            URING_ARGS="--uring"
+            echo -e "${GREEN}✓ io_uring enabled / io_uring 已启用${NC}"
+        fi
+    fi
 fi
 
 # Create server configuration with conditional XHTTP
@@ -359,7 +383,7 @@ User=root
 Group=root
 Environment=RUST_LOG=info
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/vless-server --config $INSTALL_DIR/config.json ${XDP_ARGS}
+ExecStart=$INSTALL_DIR/vless-server --config $INSTALL_DIR/config.json ${XDP_ARGS} ${URING_ARGS}
 Restart=on-failure
 RestartSec=10s
 
