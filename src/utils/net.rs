@@ -29,12 +29,7 @@ impl DualTcpStream {
     pub fn raw_fd(&self) -> Option<RawFd> {
         match self {
             Self::Tokio(s) => Some(s.as_raw_fd()),
-            Self::Monoio(s) => { 
-                // Attempt to get raw fd via pointer casting or assumption about layout 
-                // is dangerous. For now we disable splice for Monoio compat path.
-                // In future, if Monoio exposes it or we find a way, we can enable it.
-                None 
-            }, 
+            Self::Monoio(_) => None, 
         }
     }
 

@@ -2,6 +2,7 @@ use std::sync::Mutex;
 use once_cell::sync::Lazy;
 use anyhow::Result;
 use crate::utils::net::DualTcpStream;
+use crate::utils::splice::SpliceGate;
 use tokio::net::TcpStream;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, error};
@@ -68,13 +69,11 @@ where
 
     /// 双向数据转发
     pub async fn relay(mut self) -> Result<()> {
-        debug!("开始双向数据转发 (使用 copy_bidirectional)");
-
-        // Optimize: Use copy_bidirectional which internaly uses splice/sendfile when possible
-        // and avoids manual user-space buffer management overhead.
+        debug!("开始数据转发 (Optimized Path)");
+        
         match tokio::io::copy_bidirectional(&mut self.client_stream, &mut self.remote_stream).await {
             Ok((c_to_r, r_to_c)) => {
-                 debug!("连接结束: C->R {} bytes, R->C {} bytes", c_to_r, r_to_c);
+                 debug!("连接正常结束: C->R {} bytes, R->C {} bytes", c_to_r, r_to_c);
                  Ok(())
             },
             Err(e) => {
