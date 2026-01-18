@@ -207,16 +207,14 @@ impl UringServer {
                         let mut buf = vec![0u8; 64 * 1024];
                         loop {
                             let (res, b) = client_r.read(buf).await;
-                            buf = b;
                             match res {
                                 Ok(0) => break,
                                 Ok(n) => {
-                                    // 使用 split_to 避免内存拷贝
-                                    let mut owned_buf = std::mem::replace(&mut buf, vec![0u8; 64 * 1024]);
-                                    owned_buf.truncate(n);
-                                    let (w_res, ret_buf) = remote_w.write_all(owned_buf).await;
+                                    let mut data = b;
+                                    data.truncate(n);
+                                    let (w_res, ret_buf) = remote_w.write_all(data).await;
                                     buf = ret_buf;
-                                    buf.resize(64 * 1024, 0);
+                                    buf.resize(64 * 1024, 0); // 真正复用同一个缓冲区
                                     if w_res.is_err() { break; }
                                 }
                                 Err(_) => break,
@@ -229,16 +227,14 @@ impl UringServer {
                         let mut buf = vec![0u8; 64 * 1024];
                         loop {
                             let (res, b) = remote_r.read(buf).await;
-                            buf = b;
                             match res {
                                 Ok(0) => break,
                                 Ok(n) => {
-                                    // 使用 split_to 避免内存拷贝
-                                    let mut owned_buf = std::mem::replace(&mut buf, vec![0u8; 64 * 1024]);
-                                    owned_buf.truncate(n);
-                                    let (w_res, ret_buf) = client_w.write_all(owned_buf).await;
+                                    let mut data = b;
+                                    data.truncate(n);
+                                    let (w_res, ret_buf) = client_w.write_all(data).await;
                                     buf = ret_buf;
-                                    buf.resize(64 * 1024, 0);
+                                    buf.resize(64 * 1024, 0); // 真正复用同一个缓冲区
                                     if w_res.is_err() { break; }
                                 }
                                 Err(_) => break,
