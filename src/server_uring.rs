@@ -211,7 +211,12 @@ impl UringServer {
                             match res {
                                 Ok(0) => break,
                                 Ok(n) => {
-                                    let (w_res, _) = remote_w.write_all(buf[..n].to_vec()).await;
+                                    // 使用 split_to 避免内存拷贝
+                                    let mut owned_buf = std::mem::replace(&mut buf, vec![0u8; 64 * 1024]);
+                                    owned_buf.truncate(n);
+                                    let (w_res, ret_buf) = remote_w.write_all(owned_buf).await;
+                                    buf = ret_buf;
+                                    buf.resize(64 * 1024, 0);
                                     if w_res.is_err() { break; }
                                 }
                                 Err(_) => break,
@@ -228,7 +233,12 @@ impl UringServer {
                             match res {
                                 Ok(0) => break,
                                 Ok(n) => {
-                                    let (w_res, _) = client_w.write_all(buf[..n].to_vec()).await;
+                                    // 使用 split_to 避免内存拷贝
+                                    let mut owned_buf = std::mem::replace(&mut buf, vec![0u8; 64 * 1024]);
+                                    owned_buf.truncate(n);
+                                    let (w_res, ret_buf) = client_w.write_all(owned_buf).await;
+                                    buf = ret_buf;
+                                    buf.resize(64 * 1024, 0);
                                     if w_res.is_err() { break; }
                                 }
                                 Err(_) => break,
