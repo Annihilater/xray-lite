@@ -106,7 +106,7 @@ impl UringServer {
         xhttp_server: Option<XhttpServer>,
     ) -> Result<()> {
         if let Ok(addr) = stream.peer_addr() {
-            info!("📨 [io_uring Native] VLESS 请求: Tcp -> {}", addr);
+            debug!("📨 [io_uring] 客户端连接: {}", addr);
         }
         
         // ⚡️ 必开优化: TCP_NODELAY
@@ -193,42 +193,93 @@ impl UringServer {
         mut bytes_mut: BytesMut,
         codec: VlessCodec,
     ) -> Result<()> {
+        // Debug: 显示解码前的 bytes_mut
+        let preview_len = bytes_mut.len().min(20);
+        let hex_before: String = bytes_mut[..preview_len].iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<Vec<_>>()
+            .join(" ");
+        debug!("🔍 解码前 bytes_mut ({} 字节): {}", bytes_mut.len(), hex_before);
+        
         loop {
             // 解析 VLESS
             match codec.decode_request(&mut bytes_mut) {
                 Ok(request) => {
+                    // Debug: 显示解码后的 bytes_mut（应该只剩下 payload）
+                    let preview_len = bytes_mut.len().min(20);
+                    let hex_after: String = if preview_len > 0 {
+                        bytes_mut[..preview_len].iter()
+                            .map(|b| format!("{:02x}", b))
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    } else {
+                        "(empty)".to_string()
+                    };
+                    debug!("🔍 解码后 bytes_mut ({} 字节): {}", bytes_mut.len(), hex_after);
+                    
                     let target_address = request.address.to_string();
-                    debug!("🔗 [io_uring Native] 连接目标: {}", target_address);
+                    info!("🔗 [io_uring Native] 连接目标: {}", target_address);
                     
                     let mut remote_stream = monoio::net::TcpStream::connect(&target_address).await?;
                     // ⚡️ 必开优化: TCP_NODELAY
                     let _ = remote_stream.set_nodelay(true);
                     
+                    // 🔑 关键：发送 VLESS 响应头（客户端在等待这个确认！）
+                    use crate::protocol::vless::VlessResponse;
+                    let response = VlessResponse::new();
+                    let response_bytes = codec.encode_response(&response)?;
+                    let (res, _) = tls_stream.write_all(response_bytes.to_vec()).await;
+                    res?;
+                    info!("📤 [io_uring] VLESS 响应头已发送");
+                    
+                    // 调试：检查初始数据
                     if !bytes_mut.is_empty() {
+                        // 显示前 20 字节的十六进制，帮助调试
+                        let preview_len = bytes_mut.len().min(20);
+                        let hex_preview: String = bytes_mut[..preview_len].iter()
+                            .map(|b| format!("{:02x}", b))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        info!("📦 [io_uring] 发送初始数据: {} 字节, 前缀: {}", bytes_mut.len(), hex_preview);
                         let (res, _) = remote_stream.write_all(bytes_mut.to_vec()).await;
                         res?;
+                    } else {
+                        info!("📦 [io_uring] 无初始数据，等待客户端通过转发发送");
                     }
 
                     let (mut client_r, mut client_w) = tls_stream.into_split();
                     let (mut remote_r, mut remote_w) = remote_stream.into_split();
 
+                    info!("🔄 [io_uring] 开始双向转发...");
+                    
                     let c2r = async move {
                         // 32KB: 平衡 TLS record (16KB) 和系统调用开销
                         let mut buf = vec![0u8; 32 * 1024];
+                        let mut total_bytes = 0usize;
                         loop {
                             let (res, b) = client_r.read(buf).await;
                             match res {
-                                Ok(0) => break,
+                                Ok(0) => {
+                                    debug!("📥 [c2r] 客户端关闭，共转发 {} 字节", total_bytes);
+                                    break;
+                                }
                                 Ok(n) => {
+                                    total_bytes += n;
                                     let mut data = b;
                                     data.truncate(n);
                                     let (w_res, ret_buf) = remote_w.write_all(data).await;
                                     buf = ret_buf;
                                     // ⚡️ 性能关键：使用 unsafe set_len 避免 resize 的清零开销
                                     unsafe { buf.set_len(32 * 1024); }
-                                    if w_res.is_err() { break; }
+                                    if w_res.is_err() { 
+                                        debug!("📥 [c2r] 写入远程失败");
+                                        break; 
+                                    }
                                 }
-                                Err(_) => break,
+                                Err(e) => {
+                                    debug!("📥 [c2r] 读取客户端错误: {}", e);
+                                    break;
+                                }
                             }
                         }
                         let _ = remote_w.shutdown().await;
@@ -237,26 +288,38 @@ impl UringServer {
                     let r2c = async move {
                         // 32KB: 平衡 TLS record (16KB) 和系统调用开销
                         let mut buf = vec![0u8; 32 * 1024];
+                        let mut total_bytes = 0usize;
                         loop {
                             let (res, b) = remote_r.read(buf).await;
                             match res {
-                                Ok(0) => break,
+                                Ok(0) => {
+                                    debug!("📤 [r2c] 远程关闭，共转发 {} 字节", total_bytes);
+                                    break;
+                                }
                                 Ok(n) => {
+                                    total_bytes += n;
                                     let mut data = b;
                                     data.truncate(n);
                                     let (w_res, ret_buf) = client_w.write_all(data).await;
                                     buf = ret_buf;
                                     // ⚡️ 性能关键：使用 unsafe set_len 避免 resize 的清零开销
                                     unsafe { buf.set_len(32 * 1024); }
-                                    if w_res.is_err() { break; }
+                                    if w_res.is_err() { 
+                                        debug!("📤 [r2c] 写入客户端失败");
+                                        break; 
+                                    }
                                 }
-                                Err(_) => break,
+                                Err(e) => {
+                                    debug!("📤 [r2c] 读取远程错误: {}", e);
+                                    break;
+                                }
                             }
                         }
                         let _ = client_w.shutdown().await;
                     };
 
                     futures::join!(c2r, r2c);
+                    info!("✅ [io_uring] 连接完成");
                     return Ok(());
                 }
                 Err(e) => {
