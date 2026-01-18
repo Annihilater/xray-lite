@@ -110,3 +110,11 @@ impl AsyncWrite for DualTcpStream {
         }
     }
 }
+
+// monoio-compat StreamWrapper 实现
+impl<T> MaybeAsRawFd for monoio_compat::StreamWrapper<T> {
+    fn maybe_as_raw_fd(&self) -> Option<RawFd> {
+        // StreamWrapper 是一个桥接层，没有直接的 raw fd
+        None
+    }
+}

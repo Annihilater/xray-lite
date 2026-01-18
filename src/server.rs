@@ -34,26 +34,20 @@ impl Server {
 
     /// 运行服务器
     pub async fn run(self) -> Result<()> {
-        let mut handles = vec![];
-
         for inbound in self.config.inbounds.clone() {
             let connection_manager = self.connection_manager.clone();
             
-            let handle = tokio::spawn(async move {
-                // For main loop, we still use tokio::spawn because we want JoinHandle
+            crate::utils::task::spawn(async move {
                 if let Err(e) = Self::run_inbound(inbound, connection_manager).await {
                     error!("入站处理失败: {}", e);
                 }
             });
-
-            handles.push(handle);
         }
 
-        for handle in handles {
-            handle.await?;
+        // 保持主任务存活
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
         }
-
-        Ok(())
     }
 
     async fn run_inbound(inbound: Inbound, connection_manager: ConnectionManager) -> Result<()> {
