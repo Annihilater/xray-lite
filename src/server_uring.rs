@@ -201,6 +201,9 @@ impl UringServer {
             .join(" ");
         debug!("🔍 解码前 bytes_mut ({} 字节): {}", bytes_mut.len(), hex_before);
         
+        // 预分配缓冲区，避免循环内分配
+        let mut buffer = vec![0u8; 4096];
+        
         loop {
             // 解析 VLESS
             match codec.decode_request(&mut bytes_mut) {
@@ -251,6 +254,11 @@ impl UringServer {
                     let (mut remote_r, mut remote_w) = remote_stream.into_split();
 
                     info!("🔄 [io_uring] 开始双向转发...");
+                    
+                    // 定义超时时间 (5分钟空闲超时)
+                    // 注意：monoio 目前没有直接的 idle timeout stream 包装器，
+                    // 这里简化处理，依赖 TCP KeepAlive。如果需要严格的应用层超时，需要自行实现 loop select。
+                    // 考虑到代码复杂度，暂保持原样，仅优化内存。
                     
                     let c2r = async move {
                         // 32KB: 平衡 TLS record (16KB) 和系统调用开销
@@ -324,10 +332,10 @@ impl UringServer {
                 }
                 Err(e) => {
                     if bytes_mut.len() > 256 {
-                        return Err(anyhow::anyhow!("VLESS 解析失败: {}", e));
+                        return Err(anyhow::anyhow!("VLESS 解析失败或头过大: {}", e));
                     }
                     // 继续读取更多数据
-                    let mut buffer = vec![0u8; 4096];
+                    // 使用已分配的 buffer
                     let (res, buf) = tls_stream.read(buffer).await;
                     buffer = buf;
                     let n = res?;
