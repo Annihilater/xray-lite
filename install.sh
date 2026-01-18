@@ -126,7 +126,7 @@ echo -e "${YELLOW}[2/6] Downloading Xray-Lite binaries... / 下载 Xray-Lite 二
 XRAY_BINARY="${XRAY_BINARY_NAME}"
 
 if [ "$BINARY_ARCH" = "amd64" ] || [ "$BINARY_ARCH" = "x86_64" ]; then
-    KEYGEN_BINARY="keygen-linux-amd64"
+    KEYGEN_BINARY="keygen-linux-x86_64"
 else
     KEYGEN_BINARY="keygen-linux-${BINARY_ARCH}"
 fi
