@@ -72,6 +72,26 @@ cargo build --release
 ./target/release/vless-server --config config.json
 ```
 
+### 3. Version Selection & io_uring Warning / 版本选择与 io_uring 警告
+
+The installation script provides multiple versions. Please choose carefully:
+安装脚本提供多个版本，请谨慎选择：
+
+- **v0.4.6 (Stable)**: Standard Tokio runtime. Compatible with all Linux kernels. Best for general use.
+- **v0.6.0-xdp**: Adds Kernel XDP Firewall protection. Requires Kernel 5.4+.
+- **v0.6.0-beta1**: **io_uring High-Performance Mode**. Requires Kernel 5.10+.
+
+> **⚠️ CRITICAL WARNING / 严重警告 (io_uring Mode)**
+> 
+> When using **v0.6.0-beta1 (io_uring)**, you **MUST USE VLESS + Reality**.
+> **DO NOT USE XHTTP**.
+> 
+> The io_uring optimization comes from a specialized "fast path" that bypasses complex userspace processing. XHTTP requires complex handling that is incompatible with this mode.
+>
+> 当使用 **v0.6.0-beta1 (io_uring)** 时，**必须使用 VLESS + Reality**。
+> **请勿使用 XHTTP**。
+> io_uring 优化源于绕过复杂用户态处理的“快速路径”，而 XHTTP 需要复杂的处理逻辑，与此模式不兼容。
+
 ### 🔥 io_uring Mode (Experimental) / io_uring 模式（实验性）
 
 **Requirements / 系统要求:**
