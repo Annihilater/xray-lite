@@ -1,4 +1,6 @@
 use anyhow::Result;
+use super::XhttpConfig;
+use dashmap::DashMap;
 use bytes::{Buf, Bytes, BytesMut};
 use h2::server::{self, SendResponse};
 use h2::SendStream;
@@ -9,11 +11,9 @@ use tracing::{debug, info, warn, error, trace};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+use crate::utils::timer::{timeout, sleep};
 use once_cell::sync::Lazy;
 use rand::{distributions::Alphanumeric, Rng};
-
-use super::XhttpConfig;
-use dashmap::DashMap;
 
 /// 全局会话管理器
 struct Session {
@@ -66,9 +66,9 @@ impl H2Handler {
 
     pub async fn handle<T, F, Fut>(&self, stream: T, handler: F) -> Result<()>
     where
-        T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+        T: AsyncRead + AsyncWrite + crate::utils::net::MaybeAsRawFd + Unpin + 'static,
         F: Fn(Box<dyn crate::server::AsyncStream>) -> Fut + Clone + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Result<()>> + Send + 'static,
+        Fut: std::future::Future<Output = Result<()>> + 'static,
     {
         info!("XHTTP: 启动 V41 拟态防御引擎 (Balanced Performance + Adaptive Memory)");
 
@@ -79,36 +79,29 @@ impl H2Handler {
             .max_concurrent_streams(500)
             .max_frame_size(16384);
 
-        // 使用 tokio::time::timeout 替代不存在的 handshake_timeout 方法
-        let mut connection = tokio::time::timeout(
+        // 使用 crate::utils::timer::timeout 替代 tokio
+        let mut connection = timeout(
             Duration::from_secs(20),
             builder.handshake(stream)
         ).await??;
 
         // --- 🌟 H2 Ping-Pong 随机心跳混淆 (V89) ---
-        // 获取 PingPong 句柄，启动后台任务随机发送 PING
-        // 这会迫使客户端回复 ACK，制造双向的背景流量噪声，干扰时序分析。
         if let Some(mut ping_pong) = connection.ping_pong() {
-            tokio::spawn(async move {
+            crate::utils::task::spawn(async move {
                 loop {
-                    // 随机休眠 15 - 45 秒 (模拟真实心跳间隔，不要太频繁以免浪费流量)
                     let sleep_ms = {
                          let mut rng = rand::thread_rng();
                          rng.gen_range(15000..45000)
                     };
-                    tokio::time::sleep(tokio::time::Duration::from_millis(sleep_ms)).await;
+                    sleep(Duration::from_millis(sleep_ms)).await;
 
-                    // 生成随机 8 字节载荷 (h2 crate 限制 payload 为 opaque，主要依赖时序混淆)
                     let _payload: [u8; 8] = {
                         let mut rng = rand::thread_rng();
                         rng.gen()
                     };
                     
-                    // 发送 PING
                     if let Err(e) = ping_pong.send_ping(h2::Ping::opaque()) {
-                        debug!("🌪️ H2 Noise: Ping failed (system busy or network jitter): {}", e);
-                        // 稳定性优化：Ping 这种辅助任务失败不应该立即拖死主循环，尝试等待后重启逻辑
-                        // tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                        debug!("🌪️ H2 Noise: Ping failed: {}", e);
                         break;
                     }
                     debug!("🌪️ H2 Noise: Sent random PING");
@@ -122,7 +115,7 @@ impl H2Handler {
                 Ok((request, respond)) => {
                     let config = self.config.clone();
                     let handler = handler.clone();
-                    tokio::spawn(async move {
+                    crate::utils::task::spawn(async move {
                         if let Err(e) = Self::handle_request(config, request, respond, handler).await {
                             debug!("连接处理闭合: {}", e);
                         }
@@ -145,7 +138,7 @@ impl H2Handler {
     ) -> Result<()>
     where
         F: Fn(Box<dyn crate::server::AsyncStream>) -> Fut + Clone + Send + 'static,
-        Fut: std::future::Future<Output = Result<()>> + Send + 'static,
+        Fut: std::future::Future<Output = Result<()>> + 'static,
     {
         let path = request.uri().path().to_string();
         let method = request.method();
@@ -168,7 +161,7 @@ impl H2Handler {
                 for _ in 0..40 {
                     let found = SESSIONS.contains_key(&path);
                     if found { break; }
-                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    sleep(Duration::from_millis(50)).await;
                 }
             }
 
@@ -196,16 +189,16 @@ impl H2Handler {
     ) -> Result<()>
     where
         F: Fn(Box<dyn crate::server::AsyncStream>) -> Fut + Clone + Send + 'static,
-        Fut: std::future::Future<Output = Result<()>> + Send + 'static,
+        Fut: std::future::Future<Output = Result<()>> + 'static,
     {
         let response = Response::builder()
             .status(StatusCode::OK)
             .header("content-type", "application/octet-stream")
             .header("server", "nginx/1.26.0")
             .header("cache-control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0")
-            .header("x-padding", Self::gen_padding()) // 注入动态填充
+            .header("x-padding", Self::gen_padding())
             .body(())
-            .unwrap();
+            .map_err(|e| anyhow::anyhow!("Failed to build response: {}", e))?;
 
         let mut send_stream = respond.send_response(response, false)?;
         let (client_io, server_io) = tokio::io::duplex(65536);
@@ -215,7 +208,9 @@ impl H2Handler {
         let use_grpc_framing_down = use_grpc_framing.clone();
 
         debug!("XHTTP Standard: 启动 VLESS 处理逻辑 (is_grpc: {})", is_grpc);
-        tokio::spawn(handler(Box::new(server_io)));
+        crate::utils::task::spawn(async move {
+            let _ = handler(Box::new(server_io)).await;
+        });
         let (mut client_read, mut client_write) = tokio::io::split(client_io);
 
         // UP
@@ -333,7 +328,12 @@ impl H2Handler {
 
         // 修复：不能使用 select!，因为上行流结束不代表下行流也该结束
         // 重新使用 spawn 模式，让两个流独立运行至自然闭合
-        tokio::spawn(up_task);
+        // 重新使用 spawn 模式，让两个流独立运行至自然闭合
+        crate::utils::task::spawn(async move {
+            if let Err(e) = up_task.await {
+                debug!("XHTTP UP tasks error: {}", e);
+            }
+        });
         if let Err(e) = down_task.await {
             debug!("XHTTP 传输级异常: {}", e);
         }
@@ -347,15 +347,29 @@ impl H2Handler {
     ) -> Result<()>
     where
         F: Fn(Box<dyn crate::server::AsyncStream>) -> Fut + Clone + Send + 'static,
-        Fut: std::future::Future<Output = Result<()>> + Send + 'static,
+        Fut: std::future::Future<Output = Result<()>> + 'static,
     {
         let (to_vless_tx, mut to_vless_rx) = mpsc::unbounded_channel::<Bytes>();
         let notify = Arc::new(Notify::new());
         
+        // RAII Guard cleanup
+        struct SessionGuard(String);
+        impl Drop for SessionGuard {
+            fn drop(&mut self) {
+                if SESSIONS.contains_key(&self.0) {
+                     SESSIONS.remove(&self.0);
+                     debug!("Session cleaned up: {}", self.0);
+                }
+            }
+        }
+
         SESSIONS.insert(path.clone(), Session { to_vless_tx, notify: notify.clone() });
+        let _guard = SessionGuard(path.clone());
 
         let (client_io, server_io) = tokio::io::duplex(65536);
-        tokio::spawn(handler(Box::new(server_io)));
+        crate::utils::task::spawn(async move {
+            let _ = handler(Box::new(server_io)).await;
+        });
         let (mut client_read, mut client_write) = tokio::io::split(client_io);
 
         let response = Response::builder()
@@ -363,9 +377,9 @@ impl H2Handler {
             .header("content-type", "application/octet-stream")
             .header("server", "nginx/1.26.0")
             .header("cache-control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0")
-            .header("x-padding", Self::gen_padding()) // 注入动态填充
+            .header("x-padding", Self::gen_padding())
             .body(())
-            .unwrap();
+            .map_err(|e| anyhow::anyhow!("Failed to build response: {}", e))?;
         let mut send_stream = respond.send_response(response, false)?;
 
         let downstream = async move {
@@ -394,10 +408,14 @@ impl H2Handler {
         };
 
         // 修复：独立运行
-        tokio::spawn(upstream);
+        // 修复：独立运行
+        crate::utils::task::spawn(async move {
+            if let Err(e) = upstream.await {
+                debug!("XHTTP UPSTREAM error: {}", e);
+            }
+        });
         let _ = downstream.await;
         
-        SESSIONS.remove(&path);
         notify.notify_waiters();
         Ok(())
     }
@@ -417,9 +435,9 @@ impl H2Handler {
             .status(StatusCode::OK)
             .header("server", "nginx/1.26.0")
             .header("cache-control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0")
-            .header("x-padding", Self::gen_padding()) // 注入动态填充
+            .header("x-padding", Self::gen_padding())
             .body(())
-            .unwrap();
+            .unwrap_or_default();
         respond.send_response(response, true)?;
         Ok(())
     }
@@ -432,7 +450,7 @@ impl H2Handler {
             .status(status)
             .header("server", "nginx/1.26.0")
             .body(())
-            .unwrap();
+            .unwrap_or_default(); // Fallback to default if builder fails
         respond.send_response(response, true)?;
         Ok(())
     }

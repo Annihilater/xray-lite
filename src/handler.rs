@@ -1,5 +1,5 @@
 use anyhow::Result;
-use tracing::{info, error, debug};
+use tracing::{info, error, debug, warn};
 use crate::server::AsyncStream;
 use crate::protocol::vless::{VlessCodec, Command, VlessResponse};
 use crate::network::ConnectionManager;
@@ -16,7 +16,8 @@ pub async fn serve_vless(
     // Optimize: 增大缓冲区至 16KB 以减少系统调用，提升高吞吐场景性能
     let mut buf = bytes::BytesMut::with_capacity(16384);
     use tokio::io::AsyncReadExt;
-    use tokio::time::{timeout, Duration};
+    use std::time::Duration;
+    use crate::utils::timer::timeout;
     
     // 第一次读取，5秒超时
     let read_result = timeout(Duration::from_secs(30), stream.read_buf(&mut buf)).await;
@@ -109,7 +110,7 @@ pub async fn serve_vless(
             info!("🔗 连接目标: {}", target_address);
             
             // 连接远程服务器
-            let mut remote_stream = match tokio::net::TcpStream::connect(&target_address).await {
+            let mut remote_stream = match crate::utils::net::DualTcpStream::connect(&target_address).await {
                 Ok(s) => s,
                 Err(e) => {
                     error!("无法连接到目标 {}: {}", target_address, e);
@@ -136,6 +137,12 @@ pub async fn serve_vless(
         }
         Command::Udp => {
             info!("📡 UDP 请求: {}", request.address.to_string());
+            
+            // 检查运行时模式
+            if crate::utils::task::get_runtime_mode() == crate::utils::task::RuntimeMode::Monoio {
+                warn!("⚠️  io_uring 模式暂不支持 UDP，请使用 TCP 或切换到标准模式");
+                return Err(anyhow::anyhow!("UDP not supported in io_uring mode"));
+            }
             
             // 创建 UDP socket (Full Cone NAT)
             let udp_socket = match tokio::net::UdpSocket::bind("0.0.0.0:0").await {

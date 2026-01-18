@@ -10,6 +10,8 @@ mod server;
 mod transport;
 mod utils;
 mod handler;
+mod xdp;
+mod server_uring;
 
 use crate::config::Config;
 use crate::server::Server;
@@ -19,54 +21,89 @@ use crate::server::Server;
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 #[derive(Parser, Debug)]
-#[command(author, version = "0.4.6", about, long_about = None)]
+#[command(author, version = env!("CARGO_PKG_VERSION"), about, long_about = None)]
 struct Args {
-    /// 配置文件路径
     #[arg(short, long, default_value = "config.json")]
     config: String,
-
-    /// 日志级别
     #[arg(short, long, default_value = "info")]
     log_level: String,
+    #[arg(long, default_value_t = false)]
+    enable_xdp: bool,
+    #[arg(long, default_value = "eth0")]
+    xdp_iface: String,
+    #[arg(long, default_value_t = false)]
+    uring: bool,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let args = Args::parse();
-
-    // 初始化日志
-    // 优先使用环境变量 RUST_LOG，否则使用命令行参数
-    let log_level_str = std::env::var("RUST_LOG")
-        .unwrap_or_else(|_| args.log_level.clone());
     
+    if args.uring {
+        info!("⚡ Starting in high-efficiency io_uring mode");
+        use crate::utils::task::{set_runtime_mode, RuntimeMode};
+        
+        // Use FusionDriver for better balance on 1-vCPU KVM
+        let mut rt = monoio::RuntimeBuilder::<monoio::FusionDriver>::new()
+            .enable_timer()
+            .with_entries(1024) 
+            .build()
+            .expect("Failed to build monoio runtime");
+
+        // Pin to ensure low context-switch overhead
+        if let Some(core_ids) = core_affinity::get_core_ids() {
+            if !core_ids.is_empty() {
+                core_affinity::set_for_current(core_ids[0]);
+                info!("📌 Affinity set to Core 0");
+            }
+        }
+
+        rt.block_on(async move {
+            set_runtime_mode(RuntimeMode::Monoio);
+            async_main(args).await
+        })
+    } else {
+        info!("🧵 Starting in standard Tokio mode");
+        use crate::utils::task::{set_runtime_mode, RuntimeMode};
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        rt.block_on(async move {
+            set_runtime_mode(RuntimeMode::Tokio);
+            let local = tokio::task::LocalSet::new();
+            local.run_until(async_main(args)).await
+        })
+    }
+}
+
+async fn async_main(args: Args) -> Result<()> {
+    let log_level_str = std::env::var("RUST_LOG").unwrap_or_else(|_| args.log_level.clone());
     let log_level = match log_level_str.to_lowercase().as_str() {
-        "trace" => Level::TRACE,
-        "debug" => Level::DEBUG,
-        "info" => Level::INFO,
-        "warn" => Level::WARN,
-        "error" => Level::ERROR,
-        _ => Level::INFO,
+        "trace" => Level::TRACE, "debug" => Level::DEBUG, "info" => Level::INFO,
+        "warn" => Level::WARN, "error" => Level::ERROR, _ => Level::INFO,
     };
 
-    tracing_subscriber::fmt()
-        .with_max_level(log_level)
-        .with_target(false)
-        .with_thread_ids(true)
-        .init();
+    tracing_subscriber::fmt().with_max_level(log_level).with_target(false).init();
 
-    info!("🚀 Starting VLESS+Reality+XHTTP Server [V42-STABLE]");
-    info!("📄 Loading config from: {}", args.config);
-
-    // 加载配置
+    info!("🚀 Xray-Lite v0.6.0-stable [Refined Relay]");
     let config = Config::load(&args.config)?;
-    info!("✅ Configuration loaded successfully");
+    
+    let mut protected_ports = Vec::new();
+    for inbound in &config.inbounds { protected_ports.push(inbound.port); }
 
-    // 创建并启动服务器
-    let server = Server::new(config)?;
-    info!("🌐 Server initialized");
+    if args.enable_xdp || std::env::var("XRAY_XDP_ENABLE").is_ok() {
+        #[cfg(feature = "xdp")]
+        {
+            let iface = std::env::var("XRAY_XDP_IFACE").unwrap_or(args.xdp_iface);
+            xdp::loader::start_xdp(&iface, protected_ports);
+        }
+    }
 
-    // 运行服务器
-    server.run().await?;
-
+    if args.uring {
+        let server = crate::server_uring::UringServer::new(config)?;
+        server.run().await?;
+    } else {
+        let server = Server::new(config)?;
+        server.run().await?;
+    }
     Ok(())
 }

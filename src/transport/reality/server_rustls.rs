@@ -69,7 +69,7 @@ impl RealityServerRustls {
     }
 
     pub async fn accept<S>(&self, mut stream: S) -> Result<tokio_rustls::server::TlsStream<PrefixedStream<S>>> 
-    where S: AsyncRead + AsyncWrite + Unpin + Send + 'static {
+    where S: AsyncRead + AsyncWrite + Unpin + 'static + crate::utils::net::MaybeAsRawFd {
         let mut buffer = Vec::with_capacity(2048);
         while buffer.len() < 5 {
             let mut chunk = [0u8; 1024];
@@ -231,7 +231,7 @@ impl RealityServerRustls {
     }
 
     async fn fallback<S>(&self, mut stream: S, prefix: &[u8], dest: &str) -> Result<()> 
-    where S: AsyncRead + AsyncWrite + Unpin + Send + 'static {
+    where S: AsyncRead + AsyncWrite + Unpin + 'static + crate::utils::net::MaybeAsRawFd {
         let mut dest_stream = TcpStream::connect(dest).await?;
         dest_stream.write_all(prefix).await?;
         tokio::io::copy_bidirectional(&mut stream, &mut dest_stream).await?;
@@ -241,6 +241,12 @@ impl RealityServerRustls {
 
 pub struct PrefixedStream<S> { prefix: std::io::Cursor<Vec<u8>>, inner: S }
 impl<S> PrefixedStream<S> { pub fn new(prefix: Vec<u8>, inner: S) -> Self { Self { prefix: std::io::Cursor::new(prefix), inner } } }
+
+impl<S: crate::utils::net::MaybeAsRawFd> crate::utils::net::MaybeAsRawFd for PrefixedStream<S> {
+    fn maybe_as_raw_fd(&self) -> Option<std::os::fd::RawFd> {
+        self.inner.maybe_as_raw_fd()
+    }
+}
 impl<S: AsyncRead + Unpin> AsyncRead for PrefixedStream<S> {
     fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
         if self.prefix.has_remaining() {
