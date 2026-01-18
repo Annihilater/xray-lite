@@ -24,8 +24,8 @@ A lightweight, high-performance VLESS + Reality proxy server implemented in pure
 | **VLESS UDP** | ✅ Stable | UDP over TCP support / UDP over TCP 支持 |
 | **Reality** | ✅ Stable | TLS 1.3 with dynamic certificate / TLS 1.3 动态证书 |
 | **SNI Sniffing** | ✅ Stable | Auto-detect target domain / 自动嗅探目标域名 |
-| **io_uring** | ✅ Beta | Ultra-high performance async I/O (Linux 5.10+) / 超高性能异步 I/O |
-| **XHTTP (NEW)** | ✅ Universal | Integrates: **<span style="color:red">H2 Ping-Pong</span>**, **<span style="color:red">Traffic Shaping</span>**, **<span style="color:red">Chameleon Headers</span>** |
+| **io_uring Native** | ✅ **NEW** | Ultra-high performance async I/O (Linux 5.10+) / 超高性能异步 I/O |\n| **io_uring + XHTTP** | ✅ **NEW** | Full XHTTP support via hybrid architecture / 混合架构完整 XHTTP 支持 |
+| **XHTTP (H2)** | ✅ Universal | **H2 Ping-Pong** + **Traffic Shaping** + **Chameleon Headers** |
 
 ### Why Xray-Lite? / 为什么选择 Xray-Lite？
 
@@ -71,6 +71,31 @@ cargo build --release
 # Run / 运行
 ./target/release/vless-server --config config.json
 ```
+
+### 🔥 io_uring Mode (Experimental) / io_uring 模式（实验性）
+
+**Requirements / 系统要求:**
+- Linux Kernel 5.10+ (6.0+ recommended)
+- `io_uring` support enabled in kernel
+
+**启动 io_uring 模式:**
+```bash
+# Auto-detected by install script / 安装脚本会自动检测
+# Or manually start / 或手动启动
+/usr/local/x-ui/bin/xray --uring -c /usr/local/x-ui/data/xray.json
+```
+
+**Performance / 性能表现:**
+- ✅ **Reality + XHTTP**: 0-16% CPU (vs 90%+ before)
+- ✅ **Pure VLESS**: <5% CPU (ultra-high performance)
+- ✅ Automatic protocol detection and optimal path selection
+
+**Architecture / 架构说明:**
+- Pure VLESS traffic → Native `io_uring` zero-copy path
+- XHTTP (HTTP/2) traffic → `monoio-compat` bridge → Tokio `h2` handler
+- Seamless switching based on Connection Preface detection
+
+> 📖 **详细文档:** 查看 [CHANGELOG_io_uring.md](CHANGELOG_io_uring.md) 了解完整技术细节
 
 ---
 
