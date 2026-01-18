@@ -34,7 +34,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/undead-undead/xray-lite/main
 
 ### 2. XDP Installation (Performance Enhanced) / XDP 版安装（性能增强版）
 
-> **Current Version: v0.6.0-beta1 (Rate Limit)**
+> **Current Version: v0.6.0-xdp (Rate Limit)**
 > 
 > **Requirements**: Linux Kernel ≥ 5.4 (AMD64 only), Root privileges.
 
