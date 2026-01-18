@@ -1,5 +1,5 @@
 use anyhow::Result;
-use tracing::{info, error, debug};
+use tracing::{info, error, debug, warn};
 use crate::server::AsyncStream;
 use crate::protocol::vless::{VlessCodec, Command, VlessResponse};
 use crate::network::ConnectionManager;
@@ -137,6 +137,12 @@ pub async fn serve_vless(
         }
         Command::Udp => {
             info!("📡 UDP 请求: {}", request.address.to_string());
+            
+            // 检查运行时模式
+            if crate::utils::task::get_runtime_mode() == crate::utils::task::RuntimeMode::Monoio {
+                warn!("⚠️  io_uring 模式暂不支持 UDP，请使用 TCP 或切换到标准模式");
+                return Err(anyhow::anyhow!("UDP not supported in io_uring mode"));
+            }
             
             // 创建 UDP socket (Full Cone NAT)
             let udp_socket = match tokio::net::UdpSocket::bind("0.0.0.0:0").await {
