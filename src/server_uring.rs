@@ -4,7 +4,7 @@
 use anyhow::Result;
 use monoio::net::TcpListener;
 use monoio::io::{AsyncReadRent, AsyncWriteRent, AsyncReadRentExt, AsyncWriteRentExt, Splitable};
-use tracing::{error, info, warn};
+use tracing::{error, info, warn, debug};
 use uuid::Uuid;
 use bytes::BytesMut;
 
@@ -198,7 +198,7 @@ impl UringServer {
             match codec.decode_request(&mut bytes_mut) {
                 Ok(request) => {
                     let target_address = request.address.to_string();
-                    info!("🔗 [io_uring Native] 连接目标: {}", target_address);
+                    debug!("🔗 [io_uring Native] 连接目标: {}", target_address);
                     
                     let mut remote_stream = monoio::net::TcpStream::connect(&target_address).await?;
                     // ⚡️ 必开优化: TCP_NODELAY
@@ -213,8 +213,8 @@ impl UringServer {
                     let (mut remote_r, mut remote_w) = remote_stream.into_split();
 
                     let c2r = async move {
-                        // TLS record size 限制通常是 16KB，匹配这个大小更高效
-                        let mut buf = vec![0u8; 16 * 1024];
+                        // 32KB: 平衡 TLS record (16KB) 和系统调用开销
+                        let mut buf = vec![0u8; 32 * 1024];
                         loop {
                             let (res, b) = client_r.read(buf).await;
                             match res {
@@ -225,7 +225,7 @@ impl UringServer {
                                     let (w_res, ret_buf) = remote_w.write_all(data).await;
                                     buf = ret_buf;
                                     // ⚡️ 性能关键：使用 unsafe set_len 避免 resize 的清零开销
-                                    unsafe { buf.set_len(16 * 1024); }
+                                    unsafe { buf.set_len(32 * 1024); }
                                     if w_res.is_err() { break; }
                                 }
                                 Err(_) => break,
@@ -235,8 +235,8 @@ impl UringServer {
                     };
 
                     let r2c = async move {
-                        // TLS record size 限制通常是 16KB，匹配这个大小更高效
-                        let mut buf = vec![0u8; 16 * 1024];
+                        // 32KB: 平衡 TLS record (16KB) 和系统调用开销
+                        let mut buf = vec![0u8; 32 * 1024];
                         loop {
                             let (res, b) = remote_r.read(buf).await;
                             match res {
@@ -247,7 +247,7 @@ impl UringServer {
                                     let (w_res, ret_buf) = client_w.write_all(data).await;
                                     buf = ret_buf;
                                     // ⚡️ 性能关键：使用 unsafe set_len 避免 resize 的清零开销
-                                    unsafe { buf.set_len(16 * 1024); }
+                                    unsafe { buf.set_len(32 * 1024); }
                                     if w_res.is_err() { break; }
                                 }
                                 Err(_) => break,
