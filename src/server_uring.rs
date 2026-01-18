@@ -214,7 +214,9 @@ impl UringServer {
                                     data.truncate(n);
                                     let (w_res, ret_buf) = remote_w.write_all(data).await;
                                     buf = ret_buf;
-                                    buf.resize(64 * 1024, 0); // 真正复用同一个缓冲区
+                                    // ⚡️ 性能关键：使用 unsafe set_len 避免 resize 的清零开销
+                                    // 之前 resize(..., 0) 会导致大量无意义的 memset
+                                    unsafe { buf.set_len(64 * 1024); }
                                     if w_res.is_err() { break; }
                                 }
                                 Err(_) => break,
@@ -234,7 +236,8 @@ impl UringServer {
                                     data.truncate(n);
                                     let (w_res, ret_buf) = client_w.write_all(data).await;
                                     buf = ret_buf;
-                                    buf.resize(64 * 1024, 0); // 真正复用同一个缓冲区
+                                    // ⚡️ 性能关键：使用 unsafe set_len 避免 resize 的清零开销
+                                    unsafe { buf.set_len(64 * 1024); }
                                     if w_res.is_err() { break; }
                                 }
                                 Err(_) => break,
