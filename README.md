@@ -54,7 +54,31 @@ The script will: / 脚本将自动：
 3. Auto-attach XDP program to NIC / 自动挂载 XDP 程序到网卡
 4. Generate keys and start service / 生成密钥并启动服务
 
-### 3. Build from Source / 从源码构建
+./target/release/vless-server --config config.json
+```
+
+### 3. io_uring High-Performance Mode / io_uring 高性能模式
+
+> **Current Version: v0.6.0-beta1 (io_uring)**
+> 
+> **Requirements**: Linux Kernel ≥ 5.10 (AMD64 only).
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/undead-undead/xray-lite/feature/uring-io-optimized/install.sh)
+```
+
+> **⚠️ CRITICAL WARNING / 严重警告**
+> 
+> When using io_uring mode, you **MUST USE VLESS + Reality**.
+> **DO NOT USE XHTTP**.
+> 
+> The io_uring optimization uses a specialized kernel fast path incompatible with XHTTP.
+>
+> 当使用 io_uring 模式时，**必须使用 VLESS + Reality**。
+> **请勿使用 XHTTP**。
+> io_uring 优化源于内核快速路径，与 XHTTP 不兼容。
+
+### 4. Build from Source / 从源码构建
 
 ```bash
 # Clone the repository / 克隆仓库
