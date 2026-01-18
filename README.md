@@ -54,8 +54,6 @@ The script will: / 脚本将自动：
 3. Auto-attach XDP program to NIC / 自动挂载 XDP 程序到网卡
 4. Generate keys and start service / 生成密钥并启动服务
 
-./target/release/vless-server --config config.json
-```
 
 ### 3. io_uring High-Performance Mode / io_uring 高性能模式
 
