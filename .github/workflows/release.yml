@@ -31,14 +31,21 @@ jobs:
       - name: Build Static Binary
         run: |
           cargo install cross
-          cross build --release --target ${{ matrix.target }}
+          # Enable XDP feature
+          cross build --release --target ${{ matrix.target }} --features xdp
 
       - name: Prepare Release Assets
         run: |
           mkdir dist
+          # Standard names
           cp target/${{ matrix.target }}/release/vless-server dist/vless-server-linux-${{ matrix.arch == 'amd64' && 'x86_64' || 'aarch64' }}
           cp target/${{ matrix.target }}/release/keygen dist/keygen-linux-${{ matrix.arch == 'amd64' && 'x86_64' || 'aarch64' }}
           cp target/${{ matrix.target }}/release/genconfig dist/genconfig-linux-${{ matrix.arch == 'amd64' && 'x86_64' || 'aarch64' }}
+          
+          # Compatibility names for x-ui panel (XDP version)
+          if [ "${{ matrix.arch }}" = "amd64" ]; then
+            cp target/${{ matrix.target }}/release/vless-server dist/xray-linux-amd64-xdp
+          fi
 
       - name: Upload Release
         uses: softprops/action-gh-release@v1
