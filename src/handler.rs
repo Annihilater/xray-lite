@@ -137,14 +137,22 @@ pub async fn serve_vless(
         Command::Udp => {
             info!("📡 UDP 请求: {}", request.address.to_string());
             
-            // 创建 UDP socket (Full Cone NAT)
-            let udp_socket = match tokio::net::UdpSocket::bind("0.0.0.0:0").await {
+            // Optimize: Create UDP socket with large buffers for QUIC/Video
+            let std_socket = match std::net::UdpSocket::bind("0.0.0.0:0") {
                 Ok(s) => s,
                 Err(e) => {
-                    error!("无法创建 UDP socket: {}", e);
+                    error!("无法绑定 UDP socket: {}", e);
                     return Err(e.into());
                 }
             };
+            
+            // Set socket buffers to 4MB to handle video bursts
+            let socket = socket2::Socket::from(std_socket);
+            let _ = socket.set_recv_buffer_size(4 * 1024 * 1024);
+            let _ = socket.set_send_buffer_size(4 * 1024 * 1024);
+            
+            // Convert back to Tokio socket
+            let udp_socket = tokio::net::UdpSocket::from_std(socket.into())?;
             
             // 解析目标地址
             let target_addr = request.address.to_string();
