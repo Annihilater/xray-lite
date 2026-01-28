@@ -160,6 +160,8 @@ fn try_xdp_firewall(ctx: XdpContext) -> Result<u32, ()> {
             }
 
             // 2. SYN Rate Limit (Per Source IP)
+            // Optimize: Only check Rate Limit Map for SYN packets (New Connections)
+            // Established traffic (ACK, PSH, etc.) skips this expensive lookup!
             // Check if SYN is set (0x02) and ACK is NOT set (0x10) -> New Connection Attempt
             if (flags & 0x02 != 0) && (flags & 0x10 == 0) {
                 let src_ip = u32::from_be(ip_hdr.saddr);
