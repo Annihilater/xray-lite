@@ -165,7 +165,7 @@ impl Server {
         };
 
         // 连接数限制 (防止 OOM)
-        const MAX_CONNECTIONS: usize = 4096;
+        const MAX_CONNECTIONS: usize = 10000;
         let connection_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
         
         info!("🔒 最大并发连接数: {}", MAX_CONNECTIONS);
@@ -217,6 +217,14 @@ impl Server {
                     });
                 }
                 Err(e) => {
+                    if e.kind() == std::io::ErrorKind::WouldBlock {
+                        continue;
+                    }
+                    if e.raw_os_error() == Some(24) { // EMFILE
+                        error!("❌ 系统文件句柄耗尽 (EMFILE)，等待 1 秒...");
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        continue;
+                    }
                     error!("接受连接失败: {}", e);
                 }
             }

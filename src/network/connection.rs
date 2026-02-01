@@ -146,23 +146,21 @@ impl ConnectionManager {
     {
         // 增加活跃连接计数
         self.active_connections
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
         let active_connections = self.active_connections.clone();
 
-        // 在新任务中处理连接
-        tokio::spawn(async move {
-            let connection = ProxyConnection::new(client_stream, remote_stream);
-            
-            if let Err(e) = connection.relay().await {
-                error!("连接处理失败: {}", e);
-            }
+        let connection = ProxyConnection::new(client_stream, remote_stream);
+        let result = connection.relay().await;
 
-            // 减少活跃连接计数
-            active_connections.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-        });
+        if let Err(ref e) = result {
+            error!("连接处理失败: {}", e);
+        }
 
-        Ok(())
+        // 减少活跃连接计数
+        active_connections.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+
+        result
     }
 }
 
