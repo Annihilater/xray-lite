@@ -54,39 +54,10 @@ esac
 echo -e "${GREEN}Detected architecture / 检测到架构: $ARCH${NC}"
 echo ""
 
-# Detect Kernel for XDP support / 检测内核支持 XDP
-# Requirement: Kernel >= 5.4 and x86_64 (musl eBPF support on aarch64 is tricky)
-KERNEL_VERSION=$(uname -r)
-KERNEL_MAJOR=$(echo $KERNEL_VERSION | cut -d. -f1)
-KERNEL_MINOR=$(echo $KERNEL_VERSION | cut -d. -f2)
-
+# XDP is only supported in v0.6.0+ features
+# v0.4.6 (Stable) does not support XDP
 SUPPORT_XDP=false
-
-# Simple version check for >= 5.4
-if [ "$KERNEL_MAJOR" -gt 5 ]; then
-    SUPPORT_XDP=true
-elif [ "$KERNEL_MAJOR" -eq 5 ] && [ "$KERNEL_MINOR" -ge 4 ]; then
-    SUPPORT_XDP=true
-fi
-
-# Limit XDP to x86_64 for now
-if [ "$BINARY_ARCH" != "x86_64" ]; then
-    SUPPORT_XDP=false
-fi
-
 XDP_ARGS=""
-
-if [ "$SUPPORT_XDP" = true ]; then
-    echo -e "${GREEN}High-performance Kernel Detected / 检测到高性能内核: ${KERNEL_VERSION}${NC}"
-    echo -e "${GREEN}Enabling XDP Firewall Mode (Anti-Probe) / 启用 XDP 防火墙模式 (抗探测)${NC}"
-    # Use the XDP-enhanced binary
-    # Find active interface for XDP
-    DEFAULT_IFACE=$(ip route get 8.8.8.8 | grep -oP 'dev \K\S+')
-    XDP_ARGS="--enable-xdp --xdp-iface ${DEFAULT_IFACE:-eth0}"
-else
-    echo -e "${YELLOW}Standard Kernel Detected / 检测到标准内核: ${KERNEL_VERSION}${NC}"
-    echo -e "${YELLOW}Using Standard Mode (Compatibility) / 使用标准模式 (兼容模式)${NC}"
-fi
 
 # Use the static single binary for all cases (it contains XDP logic internally)
 # 使用静态单一二进制 (内部包含 XDP 逻辑)
