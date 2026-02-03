@@ -22,7 +22,7 @@ A lightweight, high-performance VLESS + Reality proxy server implemented in pure
 
 ### 1. Standard Installation (Recommended) / 标准版安装（推荐）
 
-> **Current Version: v0.5.2 (Stable)**
+> **Current Version: v0.4.6**
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/undead-undead/xray-lite/main/install.sh)
