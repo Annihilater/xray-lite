@@ -54,13 +54,6 @@ esac
 echo -e "${GREEN}Detected architecture / 检测到架构: $ARCH${NC}"
 echo ""
 
-# XDP is only supported in v0.6.0+ features
-# v0.4.6 (Stable) does not support XDP
-SUPPORT_XDP=false
-XDP_ARGS=""
-
-# Use the static single binary for all cases (it contains XDP logic internally)
-# 使用静态单一二进制 (内部包含 XDP 逻辑)
 if [ "$BINARY_ARCH" = "amd64" ] || [ "$BINARY_ARCH" = "x86_64" ]; then
     XRAY_BINARY_NAME="xray-linux-amd64"
 else
