@@ -330,7 +330,7 @@ User=root
 Group=root
 Environment=RUST_LOG=info
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/vless-server --config $INSTALL_DIR/config.json ${XDP_ARGS}
+ExecStart=$INSTALL_DIR/vless-server --config $INSTALL_DIR/config.json
 Restart=on-failure
 RestartSec=10s
 
