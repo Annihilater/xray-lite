@@ -116,6 +116,8 @@ cargo build --release
 ```
 If you think the project is good, you can support the developers.
 https://buymeacoffee.com/undeadundead
+
+
 crypto:
 
 Sol: 9QFKQ3jpBSuNPLZQH1uq5GrJm4RDKue82zeVaXwazcmj
