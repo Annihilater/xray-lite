@@ -4,7 +4,7 @@ use tokio::io::{ReadBuf, AsyncRead, AsyncWrite};
 use bytes::Buf;
 use anyhow::Result;
 use tokio::net::{TcpListener, TcpStream};
-use tracing::{error, info, warn};
+use tracing::{error, info, warn, debug};
 use uuid::Uuid;
 
 use crate::config::{Config, Inbound, Security};
@@ -62,27 +62,42 @@ impl Server {
         let addr = format!("{}:{}", inbound.listen, inbound.port);
         let sockopt = &inbound.stream_settings.sockopt;
         
-        // 使用 socket2 创建监听器以支持 TCP Fast Open
-        let listener = if sockopt.tcp_fast_open {
-            use socket2::{Socket, Domain, Type, Protocol};
-            use std::net::SocketAddr;
-            
-            let socket_addr: SocketAddr = addr.parse()?;
-            let domain = if socket_addr.is_ipv4() {
-                Domain::IPV4
-            } else {
-                Domain::IPV6
-            };
-            
-            let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
-            
-            // 设置 SO_REUSEADDR
-            socket.set_reuse_address(true)?;
-            
-            // 启用 TCP Fast Open (队列长度为 256)
+        // 使用 socket2 创建监听器以支持 TCP Fast Open 和 TCP KeepAlive
+        use socket2::{Socket, Domain, Type, Protocol};
+        use std::net::SocketAddr;
+        
+        let socket_addr: SocketAddr = addr.parse()?;
+        let domain = if socket_addr.is_ipv4() {
+            Domain::IPV4
+        } else {
+            Domain::IPV6
+        };
+        
+        let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
+        
+        // 设置 SO_REUSEADDR
+        socket.set_reuse_address(true)?;
+        #[cfg(unix)]
+        socket.set_reuse_port(true).ok();
+
+        // =================================================================================
+        // 核心修复: 启用 TCP KeepAlive 以清理半开连接
+        // =================================================================================
+        let keepalive = socket2::TcpKeepalive::new()
+            .with_time(std::time::Duration::from_secs(60))
+            .with_interval(std::time::Duration::from_secs(10))
+            .with_retries(3);
+        
+        if let Err(e) = socket.set_tcp_keepalive(&keepalive) {
+            warn!("⚠️ 无法设置 TCP KeepAlive: {}", e);
+        } else {
+            debug!("✅ TCP KeepAlive 已启用 (Idle:60s, Intvl:10s, Cnt:3)");
+        }
+
+        // 启用 TCP Fast Open (如果配置启用)
+        if sockopt.tcp_fast_open {
             #[cfg(target_os = "linux")]
             {
-                // Linux 特有的 TCP_FASTOPEN 选项
                 use std::os::unix::io::AsRawFd;
                 let fd = socket.as_raw_fd();
                 let val: libc::c_int = 256;
@@ -95,17 +110,15 @@ impl Server {
                         std::mem::size_of::<libc::c_int>() as libc::socklen_t,
                     );
                 }
-                info!("🚀 TCP Fast Open 已启用 (队列长度: 256) [Build 41]");
+                info!("🚀 TCP Fast Open 已启用 (队列长度: 256)");
             }
-            
-            socket.bind(&socket_addr.into())?;
-            socket.listen(1024)?;
-            socket.set_nonblocking(true)?;
-            
-            TcpListener::from_std(std::net::TcpListener::from(socket))?
-        } else {
-            TcpListener::bind(&addr).await?
-        };
+        }
+        
+        socket.bind(&socket_addr.into())?;
+        socket.listen(1024)?;
+        socket.set_nonblocking(true)?;
+        
+        let listener = TcpListener::from_std(std::net::TcpListener::from(socket))?;
 
         info!("🎯 监听 {} (协议: {:?})", addr, inbound.protocol);
 
