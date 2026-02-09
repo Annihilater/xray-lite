@@ -294,7 +294,40 @@ impl H2Handler {
                 let len = chunk.len();
                 traffic_counter_up.fetch_add(len as u64, Ordering::Relaxed);
                 let _ = body.flow_control().release_capacity(len);
-                client_write.write_all(&chunk).await?;
+                trace!("XHTTP UP: 收到 {} 字节原始数据", len);
+                
+                if first_chunk && use_grpc_framing_up.load(Ordering::Relaxed) {
+                    first_chunk = false;
+                    if len > 0 && chunk[0] != 0x00 && chunk[0] != 0x01 {
+                        warn!("XHTTP UP: 检测到首字节 ({:02x}) 非 gRPC 格式，自动回退到普通流模式", chunk[0]);
+                        use_grpc_framing_up.store(false, Ordering::Relaxed);
+                    }
+                }
+
+                if use_grpc_framing_up.load(Ordering::Relaxed) {
+                    leftover.extend_from_slice(&chunk);
+                    while leftover.len() >= 5 {
+                        let msg_len = u32::from_be_bytes([leftover[1], leftover[2], leftover[3], leftover[4]]) as usize;
+                        if msg_len > 65535 {
+                            warn!("XHTTP UP: 检测到异常消息长度 ({}), 判定为 VLESS 原始流，转回普通模式", msg_len);
+                            use_grpc_framing_up.store(false, Ordering::Relaxed);
+                            client_write.write_all(&leftover).await?;
+                            leftover.clear();
+                            break;
+                        }
+
+                        if leftover.len() >= 5 + msg_len {
+                            let _ = leftover.split_to(5);
+                            let data = leftover.split_to(msg_len);
+                            trace!("XHTTP UP: 解析到 {} 字节 gRPC 消息", data.len());
+                            client_write.write_all(&data).await?;
+                        } else { 
+                            break; 
+                        }
+                    }
+                } else {
+                    client_write.write_all(&chunk).await?;
+                }
             }
             debug!("XHTTP UP: 请求体读取结束");
             Ok::<(), anyhow::Error>(())
@@ -347,7 +380,9 @@ impl H2Handler {
         // 必须联动：一端彻底结束或出错，另一端也该停止，释放 H2 流
         debug!("XHTTP Standalone: 启动联动传输任务");
         
-        let _ = tokio::try_join!(up_task, down_task);
+        let up_handle = tokio::spawn(up_task);
+        let _ = down_task.await;
+        let _ = up_handle.await;
         
         Ok(())
     }
