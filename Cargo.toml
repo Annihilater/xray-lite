@@ -30,6 +30,8 @@ x25519-dalek = { version = "2.0", features = ["static_secrets", "getrandom"] }
 sha2 = "0.10"
 hkdf = "0.12"
 aes-gcm = "0.10"
+subtle = "2.5"
+
 
 # UUID
 uuid = { version = "1.6", features = ["v4", "serde"] }

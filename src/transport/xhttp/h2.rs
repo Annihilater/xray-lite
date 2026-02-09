@@ -7,7 +7,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{mpsc, Notify};
 use tracing::{debug, info, warn, error, trace};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 use once_cell::sync::Lazy;
 use rand::{distributions::Alphanumeric, Rng};
@@ -19,6 +19,7 @@ use dashmap::DashMap;
 struct Session {
     to_vless_tx: mpsc::UnboundedSender<Bytes>,
     notify: Arc<Notify>,
+    transferred_bytes: Arc<AtomicUsize>,
 }
 
 static SESSIONS: Lazy<Arc<DashMap<String, Session>>> = Lazy::new(|| {
@@ -36,10 +37,14 @@ impl H2Handler {
         Self { config }
     }
 
-    /// 生成随机 Padding 字符串，用于模糊 HTTP 头部长度
-    fn gen_padding() -> String {
+    /// 生成随机 Padding 字符串，用于模糊 HTTP 头部长度 (支持自适应长度)
+    fn gen_padding(is_heavy: bool) -> String {
         let mut rng = rand::thread_rng();
-        let len = rng.gen_range(64..512); // 随机 64 到 512 字节
+        let len = if is_heavy {
+            rng.gen_range(16..32)  // 大流量模式：减小填充以节省带宽
+        } else {
+            rng.gen_range(64..512) // 初始模式：高强度填充以增强拟态
+        };
         rng.sample_iter(&Alphanumeric)
             .take(len)
             .map(char::from)
@@ -203,7 +208,7 @@ impl H2Handler {
             .header("content-type", "application/octet-stream")
             .header("server", "nginx/1.26.0")
             .header("cache-control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0")
-            .header("x-padding", Self::gen_padding()) // 注入动态填充
+            .header("x-padding", Self::gen_padding(false)) // 注入动态填充 (Standalone 通常为首包，使用全量填充)
             .body(())
             .unwrap();
 
@@ -366,8 +371,13 @@ impl H2Handler {
     {
         let (to_vless_tx, mut to_vless_rx) = mpsc::unbounded_channel::<Bytes>();
         let notify = Arc::new(Notify::new());
+        let transferred_bytes = Arc::new(AtomicUsize::new(0));
         
-        SESSIONS.insert(path.clone(), Session { to_vless_tx, notify: notify.clone() });
+        SESSIONS.insert(path.clone(), Session { 
+            to_vless_tx, 
+            notify: notify.clone(),
+            transferred_bytes: transferred_bytes.clone(),
+        });
 
         let (client_io, server_io) = tokio::io::duplex(65536);
         tokio::spawn(handler(Box::new(server_io)));
@@ -378,7 +388,7 @@ impl H2Handler {
             .header("content-type", "application/octet-stream")
             .header("server", "nginx/1.26.0")
             .header("cache-control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0")
-            .header("x-padding", Self::gen_padding()) // 注入动态填充
+            .header("x-padding", Self::gen_padding(false)) // 注入动态填充 (首个 GET 响应)
             .body(())
             .unwrap();
         let mut send_stream = respond.send_response(response, false)?;
@@ -402,6 +412,9 @@ impl H2Handler {
                 };
                 
                 if n == 0 { break; }
+                
+                // 更新流量统计
+                transferred_bytes.fetch_add(n, Ordering::Relaxed);
                 
                 // 整形发送
                 Self::send_split_data(&mut buf, &mut send_stream)?;
@@ -447,17 +460,26 @@ impl H2Handler {
         mut respond: SendResponse<Bytes>,
         tx: mpsc::UnboundedSender<Bytes>,
     ) -> Result<()> {
+        let path = request.uri().path().to_string();
         let mut body = request.into_body();
         while let Some(chunk_res) = body.data().await {
             let chunk = chunk_res?;
             let _ = body.flow_control().release_capacity(chunk.len());
             let _ = tx.send(chunk);
         }
+        let mut is_heavy = false;
+        if let Some(session) = SESSIONS.get(&path) {
+            let total = session.transferred_bytes.load(Ordering::Relaxed);
+            if total > 1024 * 1024 { // > 1MB
+                is_heavy = true;
+            }
+        }
+
         let response = Response::builder()
             .status(StatusCode::OK)
             .header("server", "nginx/1.26.0")
             .header("cache-control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0")
-            .header("x-padding", Self::gen_padding()) // 注入动态填充
+            .header("x-padding", Self::gen_padding(is_heavy)) // 注入动态填充 (自适应长度)
             .body(())
             .unwrap();
         respond.send_response(response, true)?;

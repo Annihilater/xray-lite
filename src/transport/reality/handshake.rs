@@ -28,8 +28,8 @@ impl RealityHandshake {
         debug!("Client SessionID: {}", hex::encode(&client_hello.session_id));
         debug!("Client Random: {}", hex::encode(&client_hello.random));
         
-        // TODO: 暂时禁用客户端认证，测试握手流程
-        let is_reality_client = true; // 临时：接受所有客户端
+        let auth = super::RealityAuth::new(&self.config.private_key)?;
+        let is_reality_client = auth.verify_client_auth(&client_hello.random, &client_hello.session_id);
         
         debug!("Reality authentication result: {}", is_reality_client);
         
@@ -39,6 +39,7 @@ impl RealityHandshake {
         }
         
         info!("✅ Reality authentication successful!");
+
         
         // 3. 执行 Reality 握手（使用我们自己的密钥）
         let client_key_share = match client_hello.get_key_share() {

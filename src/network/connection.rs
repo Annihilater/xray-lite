@@ -75,7 +75,10 @@ where
         let client_to_remote = async {
             let mut buf = PooledBuffer::get();
             loop {
-                let n = c_r.read(&mut buf).await?;
+                // 300s (5-minute) idle timeout
+                let n = tokio::time::timeout(std::time::Duration::from_secs(300), c_r.read(&mut buf))
+                    .await
+                    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "idle timeout"))??;
                 if n == 0 {
                     r_w.shutdown().await?;
                     break;
@@ -88,7 +91,10 @@ where
         let remote_to_client = async {
             let mut buf = PooledBuffer::get();
             loop {
-                let n = r_r.read(&mut buf).await?;
+                // 300s (5-minute) idle timeout
+                let n = tokio::time::timeout(std::time::Duration::from_secs(300), r_r.read(&mut buf))
+                    .await
+                    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "idle timeout"))??;
                 if n == 0 {
                     c_w.shutdown().await?;
                     break;
@@ -97,6 +103,7 @@ where
             }
             Ok::<u64, std::io::Error>(0)
         };
+
 
         // 使用 try_join! 并发执行两个拷贝任务
         // 任何一方出错或完成，都会结束
@@ -111,6 +118,7 @@ where
                 Err(e.into())
             }
         }
+
     }
 }
 

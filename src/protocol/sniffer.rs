@@ -1,69 +1,50 @@
 /// 尝试从数据包中嗅探 TLS SNI (Server Name Indication)
-/// 这是一个纯 Rust 实现，不通过 bytes crate，以避免依赖问题
+/// 这是一个高效的纯 Rust 实现，旨在最小化内存分配
 pub fn sniff_tls_sni(data: &[u8]) -> Option<String> {
+    if data.len() < 43 {
+        // Min ClientHello size
+        return None;
+    }
+
     let mut pos = 0;
-    if data.len() < 40 {
+
+    // 1. Record Layer: ContentType Handshake (0x16)
+    if data.get(pos)? != &0x16 {
+        return None;
+    }
+    pos += 5; // Skip ContentType(1), Version(2), Length(2)
+
+    // 2. ClientHello Layer: HandshakeType ClientHello (0x01)
+    if data.get(pos)? != &0x01 {
         return None;
     }
 
-    // 1. Record Layer
-    // ContentType(1) must be Handshake (0x16)
-    if data[pos] != 0x16 {
-        return None;
-    }
-    pos += 1;
-
-    // Version (2) + Length (2)
-    pos += 4;
-
-    // 2. Handshake Layer
-    if pos >= data.len() {
-        return None;
-    }
-    // HandshakeType(1) must be ClientHello (0x01)
-    if data[pos] != 0x01 {
-        return None;
-    }
-    pos += 1;
-
-    // Length(3) + Version(2) + Random(32)
-    pos += 3 + 2 + 32;
-    if pos >= data.len() {
-        return None;
-    }
+    // Skip HandshakeType(1), Length(3), Version(2), Random(32)
+    pos += 38;
 
     // SessionID
-    let sess_id_len = data[pos] as usize;
+    let sess_id_len = *data.get(pos)? as usize;
     pos += 1 + sess_id_len;
-    if pos >= data.len() {
-        return None;
-    }
 
     // Cipher Suites
     if pos + 2 > data.len() {
         return None;
     }
-    let cipher_len = ((data[pos] as usize) << 8) | (data[pos + 1] as usize);
+    let cipher_len = u16::from_be_bytes([data[pos], data[pos + 1]]) as usize;
     pos += 2 + cipher_len;
-    if pos >= data.len() {
-        return None;
-    }
 
     // Compression Methods
     if pos + 1 > data.len() {
         return None;
     }
-    let comp_len = data[pos] as usize;
+    let comp_len = *data.get(pos)? as usize;
     pos += 1 + comp_len;
-    if pos >= data.len() {
-        return None;
-    }
 
     // Extensions
     if pos + 2 > data.len() {
         return None;
     }
-    let ext_len = ((data[pos] as usize) << 8) | (data[pos + 1] as usize);
+    let ext_len = u16::from_be_bytes([data[pos], data[pos + 1]]) as usize;
     pos += 2;
 
     let end_ext = pos + ext_len;
@@ -72,8 +53,8 @@ pub fn sniff_tls_sni(data: &[u8]) -> Option<String> {
     }
 
     while pos + 4 <= end_ext {
-        let ext_type = ((data[pos] as usize) << 8) | (data[pos + 1] as usize);
-        let len = ((data[pos + 2] as usize) << 8) | (data[pos + 3] as usize);
+        let ext_type = u16::from_be_bytes([data[pos], data[pos + 1]]);
+        let len = u16::from_be_bytes([data[pos + 2], data[pos + 3]]) as usize;
         pos += 4;
 
         if pos + len > end_ext {
@@ -82,17 +63,20 @@ pub fn sniff_tls_sni(data: &[u8]) -> Option<String> {
 
         if ext_type == 0x0000 {
             // ServerName Extension
-            // ServerNameList Length (2)
             if len < 2 {
                 return None;
             }
-            let list_len = ((data[pos] as usize) << 8) | (data[pos + 1] as usize);
-            let end_list = pos + 2 + list_len;
+            let list_len = u16::from_be_bytes([data[pos], data[pos + 1]]) as usize;
             let mut p2 = pos + 2;
+            let end_list = p2 + list_len;
+
+            if end_list > pos + len {
+                return None;
+            }
 
             while p2 + 3 <= end_list {
                 let name_type = data[p2];
-                let name_len = ((data[p2 + 1] as usize) << 8) | (data[p2 + 2] as usize);
+                let name_len = u16::from_be_bytes([data[p2 + 1], data[p2 + 2]]) as usize;
                 p2 += 3;
 
                 if p2 + name_len > end_list {
@@ -101,12 +85,13 @@ pub fn sniff_tls_sni(data: &[u8]) -> Option<String> {
 
                 if name_type == 0x00 {
                     // HostName
-                    return String::from_utf8(data[p2..p2 + name_len].to_vec()).ok();
+                    return std::str::from_utf8(&data[p2..p2 + name_len])
+                        .map(|s| s.to_string())
+                        .ok();
                 }
                 p2 += name_len;
             }
         }
-
         pos += len;
     }
 

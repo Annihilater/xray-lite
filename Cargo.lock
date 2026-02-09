@@ -2025,6 +2025,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "socket2 0.5.10",
+ "subtle",
  "thiserror",
  "tikv-jemallocator",
  "tokio",
