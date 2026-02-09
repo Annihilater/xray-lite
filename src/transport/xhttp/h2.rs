@@ -7,7 +7,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{mpsc, Notify};
 use tracing::{debug, info, warn, error, trace};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, AtomicU64, Ordering};
 use std::time::Duration;
 use once_cell::sync::Lazy;
 use rand::{distributions::Alphanumeric, Rng};
@@ -26,48 +26,72 @@ static SESSIONS: Lazy<Arc<DashMap<String, Session>>> = Lazy::new(|| {
     Arc::new(DashMap::new())
 });
 
+/// 会话守卫 (RAII Guard)
+/// 确保 Session 在离开作用域时必然被移除，防止内存泄漏
+struct SessionGuard {
+    path: String,
+    notify: Arc<Notify>,
+}
+
+impl Drop for SessionGuard {
+    fn drop(&mut self) {
+        if SESSIONS.remove(&self.path).is_some() {
+            debug!("Session clean up: {}", self.path);
+        }
+        self.notify.notify_waiters();
+    }
+}
+
 /// 终极 H2/XHTTP 处理器 (v0.4.1: 编译修复与告警清理版)
 #[derive(Clone)]
 pub struct H2Handler {
     config: XhttpConfig,
+    /// 流量计数器 (用于自适应优化)
+    traffic_counter: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl H2Handler {
     pub fn new(config: XhttpConfig) -> Self {
-        Self { config }
+        Self { 
+            config,
+            traffic_counter: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        }
     }
 
-    /// 生成随机 Padding 字符串，用于模糊 HTTP 头部长度 (支持自适应长度)
-    /// 生成随机 Padding 字符串，用于模糊 HTTP 头部长度 (优化版：零成本拟态)
-    fn gen_padding(is_heavy: bool) -> String {
+    /// 自适应随机 Padding (V90: 流量敏感型)
+    fn gen_adaptive_padding(traffic: u64) -> String {
         let mut rng = rand::thread_rng();
-        let len = if is_heavy {
-            rng.gen_range(16..32)  // 大流量模式：减小填充以节省带宽
-        } else {
-            rng.gen_range(64..512) // 初始模式：高强度填充以增强拟态
-        };
         
-        // 优化：使用高效的字节映射取代迭代和 collect
-        const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-        let mut buf = vec![0u8; len];
-        for i in 0..len {
-            buf[i] = CHARS[rng.gen_range(0..CHARS.len())];
+        let (min, max) = if traffic < 1048576 {
+            (64, 512)   // 安全优先
+        } else {
+            (16, 32)    // 性能优先
+        };
+
+        let len = rng.gen_range(min..max);
+        let mut bytes = vec![0u8; len];
+        rng.fill(&mut bytes[..]);
+        
+        for b in &mut bytes {
+            *b = (*b % 62) + 48; // 映射到 0-9, A-Z, a-z
+            if *b > 57 { *b += 7; }
+            if *b > 90 { *b += 6; }
         }
-        unsafe { String::from_utf8_unchecked(buf) }
+        unsafe { String::from_utf8_unchecked(bytes) }
     }
 
     /// 智能分片发送（流量整形/Shredder）
     /// 将大数据块切分成随机大小的小块发送，消除长度特征
-    fn send_split_data(src: &mut BytesMut, send_stream: &mut SendStream<Bytes>) -> Result<()> {
+    fn send_split_data(src: &mut BytesMut, send_stream: &mut SendStream<Bytes>, counter: &Arc<std::sync::atomic::AtomicU64>) -> Result<()> {
         let mut rng = rand::thread_rng();
         
         while src.has_remaining() {
-            // 优化核心：提高切片下限与上限 (8KB - 16KB)
-            // 显著降低 Reality 加密和 H2 封装的频率，将 CPU 开销降低约 75%
             let chunk_size = rng.gen_range(8192..16384);
             let split_len = std::cmp::min(src.len(), chunk_size);
             
-            // split_to 会消耗 src 前面的字节，返回新的 Bytes (Zero-copy)
+            // 累加流量计数
+            counter.fetch_add(split_len as u64, Ordering::Relaxed);
+
             let chunk = src.split_to(split_len).freeze();
             send_stream.send_data(chunk, false)?;
         }
@@ -127,19 +151,40 @@ impl H2Handler {
         }
         // -------------------------------------------
         
-        while let Some(result) = connection.accept().await {
-            match result {
-                Ok((request, respond)) => {
-                    let config = self.config.clone();
-                    let handler = handler.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = Self::handle_request(config, request, respond, handler).await {
-                            debug!("连接处理闭合: {}", e);
+        let active_streams = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+        loop {
+            let is_idle = active_streams.load(Ordering::Relaxed) == 0;
+            
+            tokio::select! {
+                result = connection.accept() => {
+                    match result {
+                        Some(Ok((request, respond))) => {
+                            let config = self.config.clone();
+                            let handler = handler.clone();
+                            let counter = self.traffic_counter.clone();
+                            let active_streams_inner = active_streams.clone();
+                            
+                            active_streams_inner.fetch_add(1, Ordering::Relaxed);
+                            tokio::spawn(async move {
+                                if let Err(e) = Self::handle_request(config, request, respond, handler, counter).await {
+                                    debug!("连接处理闭合: {}", e);
+                                }
+                                active_streams_inner.fetch_sub(1, Ordering::Relaxed);
+                            });
                         }
-                    });
+                        Some(Err(e)) => {
+                            debug!("H2 连接中断: {}", e);
+                            break;
+                        }
+                        None => break,
+                    }
                 }
-                Err(e) => {
-                    debug!("H2 连接中断: {}", e);
+                // --- 🌟 H2 Zombie Watchdog (V92) ---
+                // 如果当前没有任何活跃流 (Active Streams == 0)
+                // 且持续 300 秒没有新请求进入，则认为此连接为僵尸连接，强制关闭。
+                _ = tokio::time::sleep(Duration::from_secs(300)), if is_idle => {
+                    debug!("H2 Connection: Zombie watchdog triggered (300s idle)");
                     break;
                 }
             }
@@ -152,6 +197,7 @@ impl H2Handler {
         request: Request<h2::RecvStream>,
         mut respond: SendResponse<Bytes>,
         handler: F,
+        traffic_counter: Arc<std::sync::atomic::AtomicU64>,
     ) -> Result<()>
     where
         F: Fn(Box<dyn crate::server::AsyncStream>) -> Fut + Clone + Send + 'static,
@@ -166,14 +212,12 @@ impl H2Handler {
         }
 
         if method == "GET" {
-            Self::handle_xhttp_get(path, respond, handler).await?;
+            Self::handle_xhttp_get(path, respond, handler, traffic_counter).await?;
         } else if method == "POST" {
             let user_agent = request.headers().get("user-agent").and_then(|v| v.to_str().ok()).unwrap_or("");
             let is_pc = user_agent.contains("Go-http-client");
 
             // 等候配对逻辑
-            // 移动端网络可能存在波动，增加等待时间至 2 秒 (40 * 50ms)
-            // 避免因 POST 请求过早到达但 Session 尚未就绪而导致的断流
             if !is_pc {
                 for _ in 0..40 {
                     let found = SESSIONS.contains_key(&path);
@@ -185,14 +229,14 @@ impl H2Handler {
             let session_tx = SESSIONS.get(&path).map(|s| s.to_vless_tx.clone());
 
             if let Some(tx) = session_tx {
-                Self::handle_xhttp_post(request, respond, tx).await?;
+                Self::handle_xhttp_post(request, respond, tx, traffic_counter).await?;
             } else {
                 let content_type = request.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("");
-                // 修复：PC 端也可能使用 standard gRPC 模式 (如 Xray-core 配置为 grpc)，不能强制 !is_pc
                 let is_grpc = content_type.contains("grpc");
-                Self::handle_standalone(request, respond, handler, is_grpc).await?;
+                Self::handle_standalone(request, respond, handler, is_grpc, traffic_counter).await?;
             }
-        } else {
+        }
+ else {
             Self::send_error_response(&mut respond, StatusCode::METHOD_NOT_ALLOWED).await?;
         }
         Ok(())
@@ -203,6 +247,7 @@ impl H2Handler {
         mut respond: SendResponse<Bytes>,
         handler: F,
         is_grpc: bool,
+        traffic_counter: Arc<std::sync::atomic::AtomicU64>,
     ) -> Result<()>
     where
         F: Fn(Box<dyn crate::server::AsyncStream>) -> Fut + Clone + Send + 'static,
@@ -213,14 +258,14 @@ impl H2Handler {
             .header("content-type", "application/octet-stream")
             .header("server", "nginx/1.26.0")
             .header("cache-control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0")
-            .header("x-padding", Self::gen_padding(false)) // 注入动态填充 (Standalone 通常为首包，使用全量填充)
+            .header("x-padding", Self::gen_adaptive_padding(0)) // Standalone 通常为首包，使用全量填充
             .body(())
             .unwrap();
 
         let mut send_stream = respond.send_response(response, false)?;
         // 扩容核心：将内部管道从 64KB 扩大到 512KB (Zero-copy buffer)
         // 彻底消除高带宽下载时的反向压力 (Backpressure)
-        let (client_io, server_io) = tokio::io::duplex(524288);
+        let (client_io, server_io) = tokio::io::duplex(524288); // 512KB Buffer
         
         let use_grpc_framing = Arc::new(AtomicBool::new(is_grpc));
         let use_grpc_framing_up = use_grpc_framing.clone();
@@ -229,6 +274,9 @@ impl H2Handler {
         debug!("XHTTP Standard: 启动 VLESS 处理逻辑 (is_grpc: {})", is_grpc);
         tokio::spawn(handler(Box::new(server_io)));
         let (mut client_read, mut client_write) = tokio::io::split(client_io);
+
+        let traffic_counter_up = traffic_counter.clone();
+        let traffic_counter_down = traffic_counter.clone();
 
         // UP
         let up_task = async move {
@@ -242,59 +290,11 @@ impl H2Handler {
             // 移除 30s 强行超时，改用更稳健的流式读取
             // 这样即使 30s 没有上行数据，连接也不会被误杀
             while let Some(chunk) = body.data().await {
-                let chunk = match chunk {
-                    Ok(c) => c,
-                    Err(e) => {
-                        let err_str = e.to_string();
-                        if err_str.contains("stream no longer needed") || err_str.contains("connection reset") {
-                            debug!("XHTTP UP: 连接正常结束 / 重置: {}", e);
-                        } else {
-                            error!("XHTTP UP: 读取请求体错误: {}", e);
-                        }
-                        break;
-                    }
-                };
-                let _ = body.flow_control().release_capacity(chunk.len());
-                trace!("XHTTP UP: 收到 {} 字节原始数据", chunk.len());
-                
-                if first_chunk && use_grpc_framing_up.load(Ordering::Relaxed) {
-                    first_chunk = false;
-                    // gRPC 帧首字节必须是 0x00 (非压缩) 或 0x01 (压缩)
-                    // 如果不是，说明客户端虽然传了 grpc header 但实际上发的是普通流
-                    if chunk.len() > 0 && chunk[0] != 0x00 && chunk[0] != 0x01 {
-                        warn!("XHTTP UP: 检测到首字节 ({:02x}) 非 gRPC 格式，自动回退到普通流模式", chunk[0]);
-                        use_grpc_framing_up.store(false, Ordering::Relaxed);
-                    }
-                }
-
-                if use_grpc_framing_up.load(Ordering::Relaxed) {
-                    leftover.extend_from_slice(&chunk);
-                    while leftover.len() >= 5 {
-                        let msg_len = u32::from_be_bytes([leftover[1], leftover[2], leftover[3], leftover[4]]) as usize;
-                        
-                        // 关键修复：长度校验 
-                        // 如果长度超过 64KB，通常不是合法的 gRPC 代理包格式 (通常为 VLESS 原始流误入)
-                        if msg_len > 65535 {
-                            warn!("XHTTP UP: 检测到异常消息长度 ({}), 判定为 VLESS 原始流，转回普通模式", msg_len);
-                            use_grpc_framing_up.store(false, Ordering::Relaxed);
-                            client_write.write_all(&leftover).await?;
-                            leftover.clear();
-                            break;
-                        }
-
-                        if leftover.len() >= 5 + msg_len {
-                            let _ = leftover.split_to(5);
-                            let data = leftover.split_to(msg_len);
-                            trace!("XHTTP UP: 解析到 {} 字节 gRPC 消息", data.len());
-                            client_write.write_all(&data).await?;
-                        } else { 
-                            debug!("XHTTP UP: gRPC 消息未全 (需要 {} 字节，现有 {} 字节)", 5 + msg_len, leftover.len());
-                            break; 
-                        }
-                    }
-                } else {
-                    client_write.write_all(&chunk).await?;
-                }
+                let chunk = chunk?;
+                let len = chunk.len();
+                traffic_counter_up.fetch_add(len as u64, Ordering::Relaxed);
+                let _ = body.flow_control().release_capacity(len);
+                client_write.write_all(&chunk).await?;
             }
             debug!("XHTTP UP: 请求体读取结束");
             Ok::<(), anyhow::Error>(())
@@ -325,10 +325,10 @@ impl H2Handler {
                     buf.advance(n);
 
                     // 整形发送 gRPC 帧
-                    Self::send_split_data(&mut frame, &mut send_stream)?;
+                    Self::send_split_data(&mut frame, &mut send_stream, &traffic_counter_down)?;
                 } else {
                     // 整形发送普通数据流
-                    Self::send_split_data(&mut buf, &mut send_stream)?;
+                    Self::send_split_data(&mut buf, &mut send_stream, &traffic_counter_down)?;
                 }
             }
             
@@ -347,22 +347,7 @@ impl H2Handler {
         // 必须联动：一端彻底结束或出错，另一端也该停止，释放 H2 流
         debug!("XHTTP Standalone: 启动联动传输任务");
         
-        let up_handle = tokio::spawn(up_task);
-        
-        tokio::select! {
-            res = up_handle => {
-                if let Err(e) = res {
-                    error!("XHTTP Standalone UP task panicked: {}", e);
-                }
-                debug!("XHTTP Standalone: UP task finished, terminating down_task");
-            }
-            res = down_task => {
-                if let Err(e) = res {
-                    debug!("XHTTP Standalone DOWN task finished with error: {}", e);
-                }
-                debug!("XHTTP Standalone: DOWN task finished, terminating up_task");
-            }
-        }
+        let _ = tokio::try_join!(up_task, down_task);
         
         Ok(())
     }
@@ -371,6 +356,7 @@ impl H2Handler {
         path: String,
         mut respond: SendResponse<Bytes>,
         handler: F,
+        traffic_counter: Arc<std::sync::atomic::AtomicU64>,
     ) -> Result<()>
     where
         F: Fn(Box<dyn crate::server::AsyncStream>) -> Fut + Clone + Send + 'static,
@@ -385,8 +371,12 @@ impl H2Handler {
             notify: notify.clone(),
             transferred_bytes: transferred_bytes.clone(),
         });
+        
+        // 创建守卫，确保函数退出(无论成功/失败/Panic)都会清理 Session
+        let _guard = SessionGuard { path: path.clone(), notify: notify.clone() };
 
-        let (client_io, server_io) = tokio::io::duplex(65536);
+        // 扩容核心：将内部管道从 64KB 扩大到 512KB (Zero-copy buffer)
+        let (client_io, server_io) = tokio::io::duplex(524288);
         tokio::spawn(handler(Box::new(server_io)));
         let (mut client_read, mut client_write) = tokio::io::split(client_io);
 
@@ -395,7 +385,7 @@ impl H2Handler {
             .header("content-type", "application/octet-stream")
             .header("server", "nginx/1.26.0")
             .header("cache-control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0")
-            .header("x-padding", Self::gen_padding(false)) // 注入动态填充 (首个 GET 响应)
+            .header("x-padding", Self::gen_adaptive_padding(0)) // 初始响应使用 0 流量权重
             .body(())
             .unwrap();
         let mut send_stream = respond.send_response(response, false)?;
@@ -424,7 +414,7 @@ impl H2Handler {
                 transferred_bytes.fetch_add(n, Ordering::Relaxed);
                 
                 // 整形发送
-                Self::send_split_data(&mut buf, &mut send_stream)?;
+                Self::send_split_data(&mut buf, &mut send_stream, &traffic_counter)?;
             }
             send_stream.send_data(Bytes::new(), true)?;
             Ok::<(), anyhow::Error>(())
@@ -466,27 +456,24 @@ impl H2Handler {
         request: Request<h2::RecvStream>,
         mut respond: SendResponse<Bytes>,
         tx: mpsc::UnboundedSender<Bytes>,
+        traffic_counter: Arc<AtomicU64>,
     ) -> Result<()> {
-        let path = request.uri().path().to_string();
         let mut body = request.into_body();
         while let Some(chunk_res) = body.data().await {
             let chunk = chunk_res?;
-            let _ = body.flow_control().release_capacity(chunk.len());
+            let len = chunk.len();
+            traffic_counter.fetch_add(len as u64, Ordering::Relaxed);
+            let _ = body.flow_control().release_capacity(len);
             let _ = tx.send(chunk);
         }
-        let mut is_heavy = false;
-        if let Some(session) = SESSIONS.get(&path) {
-            let total = session.transferred_bytes.load(Ordering::Relaxed);
-            if total > 1024 * 1024 { // > 1MB
-                is_heavy = true;
-            }
-        }
+        
+        let total = traffic_counter.load(Ordering::Relaxed);
 
         let response = Response::builder()
             .status(StatusCode::OK)
             .header("server", "nginx/1.26.0")
             .header("cache-control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0")
-            .header("x-padding", Self::gen_padding(is_heavy)) // 注入动态填充 (自适应长度)
+            .header("x-padding", Self::gen_adaptive_padding(total)) // 注入动态填充 (自适应长度)
             .body(())
             .unwrap();
         respond.send_response(response, true)?;
