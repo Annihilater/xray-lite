@@ -67,39 +67,53 @@ where
 
     /// 双向数据转发
     pub async fn relay(self) -> Result<()> {
-        debug!("开始双向数据转发 (已启用内存池)");
+        debug!("开始双向数据转发 (High-Performance Relay with 300s idle timeout)");
 
         let (mut c_r, mut c_w) = tokio::io::split(self.client_stream);
         let (mut r_r, mut r_w) = tokio::io::split(self.remote_stream);
 
+        let idle_timeout = std::time::Duration::from_secs(300);
+
         let client_to_remote = async {
-            let mut buf = PooledBuffer::get();
+            let mut buf = bytes::BytesMut::with_capacity(BUFFER_SIZE);
             loop {
-                // 300s (5-minute) idle timeout
-                let n = tokio::time::timeout(std::time::Duration::from_secs(300), c_r.read(&mut buf))
-                    .await
-                    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "idle timeout"))??;
-                if n == 0 {
-                    r_w.shutdown().await?;
-                    break;
+                match tokio::time::timeout(idle_timeout, c_r.read_buf(&mut buf)).await {
+                    Ok(Ok(0)) => {
+                        r_w.shutdown().await?;
+                        break;
+                    }
+                    Ok(Ok(_)) => {
+                        r_w.write_all(&buf).await?;
+                        buf.clear();
+                    }
+                    Ok(Err(e)) => return Err(e),
+                    Err(_) => {
+                        debug!("连接闲置超时 (Client -> Remote)");
+                        break;
+                    }
                 }
-                r_w.write_all(&buf[..n]).await?;
             }
             Ok::<u64, std::io::Error>(0)
         };
 
         let remote_to_client = async {
-            let mut buf = PooledBuffer::get();
+            let mut buf = bytes::BytesMut::with_capacity(BUFFER_SIZE);
             loop {
-                // 300s (5-minute) idle timeout
-                let n = tokio::time::timeout(std::time::Duration::from_secs(300), r_r.read(&mut buf))
-                    .await
-                    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "idle timeout"))??;
-                if n == 0 {
-                    c_w.shutdown().await?;
-                    break;
+                match tokio::time::timeout(idle_timeout, r_r.read_buf(&mut buf)).await {
+                    Ok(Ok(0)) => {
+                        c_w.shutdown().await?;
+                        break;
+                    }
+                    Ok(Ok(_)) => {
+                        c_w.write_all(&buf).await?;
+                        buf.clear();
+                    }
+                    Ok(Err(e)) => return Err(e),
+                    Err(_) => {
+                        debug!("连接闲置超时 (Remote -> Client)");
+                        break;
+                    }
                 }
-                c_w.write_all(&buf[..n]).await?;
             }
             Ok::<u64, std::io::Error>(0)
         };
