@@ -31,8 +31,12 @@ jobs:
       - name: Build Static Binary
         run: |
           cargo install cross
-          # Enable XDP feature
-          cross build --release --target ${{ matrix.target }} --features xdp
+          # Check if XDP feature exists in Cargo.toml
+          if grep -q "xdp =" Cargo.toml; then
+            cross build --release --target ${{ matrix.target }} --features xdp
+          else
+            cross build --release --target ${{ matrix.target }}
+          fi
 
       - name: Prepare Release Assets
         run: |

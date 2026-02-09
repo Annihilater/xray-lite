@@ -55,7 +55,7 @@ echo -e "${GREEN}Detected architecture / 检测到架构: $ARCH${NC}"
 echo ""
 
 if [ "$BINARY_ARCH" = "amd64" ] || [ "$BINARY_ARCH" = "x86_64" ]; then
-    XRAY_BINARY_NAME="xray-linux-amd64"
+    XRAY_BINARY_NAME="vless-server-linux-x86_64"
 else
     # Fallback for arm64 if we ever support it in static build
     XRAY_BINARY_NAME="vless-server-linux-${BINARY_ARCH}"

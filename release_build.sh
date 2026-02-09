@@ -18,10 +18,13 @@ cross_build=false
 cargo build --release --target x86_64-unknown-linux-musl
 
 # 3. 编译 XDP 版 (GNU Dynamic)
-# 带 --features xdp
-# 注意: aya 依赖 libbpf/libc，推荐用 gnu
-echo "[3/4] Building XDP (GNU) Version..."
-cargo build --release --target x86_64-unknown-linux-gnu --features xdp
+# 检查是否支持 xdp feature
+if grep -q "xdp =" Cargo.toml; then
+    echo "[3/4] Building XDP (GNU) Version..."
+    cargo build --release --target x86_64-unknown-linux-gnu --features xdp
+else
+    echo "[3/4] Skipping XDP Version (Feature not found in Cargo.toml)"
+fi
 
 # 4. 编译 Keygen (Musl)
 echo "[4/4] Building Keygen..."
@@ -30,12 +33,16 @@ cargo build --release --target x86_64-unknown-linux-musl --bin keygen
 # 5. 整理产物
 echo "Collecting artifacts..."
 cp target/x86_64-unknown-linux-musl/release/vless-server vless-server-linux-x86_64
-cp target/x86_64-unknown-linux-gnu/release/vless-server vless-server-linux-x86_64-xdp
+if [ -f target/x86_64-unknown-linux-gnu/release/vless-server ]; then
+    cp target/x86_64-unknown-linux-gnu/release/vless-server vless-server-linux-x86_64-xdp
+fi
 cp target/x86_64-unknown-linux-musl/release/keygen keygen-linux-x86_64
 
 # Strip symbols to reduce size
 strip vless-server-linux-x86_64
-strip vless-server-linux-x86_64-xdp
+if [ -f vless-server-linux-x86_64-xdp ]; then
+    strip vless-server-linux-x86_64-xdp
+fi
 strip keygen-linux-x86_64
 
 echo "=== Build Success! ==="
