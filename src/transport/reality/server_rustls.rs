@@ -133,14 +133,19 @@ impl RealityServerRustls {
                 let acceptor = TlsAcceptor::from(Arc::new(config));
                 let prefixed = PrefixedStream::new(buffer, stream);
                 
-                match acceptor.accept(prefixed).await {
-                    Ok(tls) => {
+                // 核心修复：为 TLS 握手添加超时保护 (5s)
+                match tokio::time::timeout(std::time::Duration::from_secs(5), acceptor.accept(prefixed)).await {
+                    Ok(Ok(tls)) => {
                         info!("Reality handshake successful");
                         return Ok(tls);
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         error!("Reality TLS handshake failed: {}", e);
                         bail!("Handshake failure");
+                    }
+                    Err(_) => {
+                        error!("Reality TLS handshake timeout");
+                        bail!("Handshake timeout");
                     }
                 }
             }
@@ -243,7 +248,15 @@ impl RealityServerRustls {
 
     async fn fallback<S>(&self, mut stream: S, prefix: &[u8], dest: &str) -> Result<()> 
     where S: AsyncRead + AsyncWrite + Unpin + Send + 'static {
-        let mut dest_stream = TcpStream::connect(dest).await?;
+        // 核心修复：为回退连接添加超时保护 (10s)
+        let mut dest_stream = match tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            TcpStream::connect(dest)
+        ).await {
+            Ok(Ok(s)) => s,
+            Ok(Err(e)) => return Err(e.into()),
+            Err(_) => bail!("Fallback connection timeout"),
+        };
         dest_stream.write_all(prefix).await?;
         tokio::io::copy_bidirectional(&mut stream, &mut dest_stream).await?;
         Ok(())
